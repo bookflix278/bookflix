@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bookflix</title>
+  <link rel="stylesheet" href="./assets/css/style.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="brand">Book<span class="logo-red">flix</span></div>
+
+    <div class="search-wrap">
+      <input
+        class="search"
+        type="text"
+        id="searchInput"
+        placeholder="Buscar por título, autor, categoria..."
+      />
+    </div>
+
+    <div class="actions">
+      <button class="btn" onclick="goUpload()">Upload</button>
+      <button class="btn" onclick="goBulk()">Upload em massa</button>
+      <button class="btn btn-danger" onclick="logout()">Sair</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="hero" id="hero">
+      <div class="hero-bg" id="heroBg"></div>
+
+      <div class="hero-content">
+        <div class="hero-kicker">Biblioteca digital</div>
+        <h1 class="hero-title" id="heroTitle">Bookflix</h1>
+        <div class="hero-meta" id="heroMeta">Carregando...</div>
+        <p class="hero-desc" id="heroDesc">Carregando livros...</p>
+        <div class="hero-actions" id="heroActions"></div>
+      </div>
+    </section>
+
+    <section class="section" id="rows"></section>
+  </main>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card" style="position:relative;">
+      <button class="modal-close" onclick="closeModal()">✕</button>
+      <div id="modalTop"></div>
+    </div>
+  </div>
+
+  <script src="./assets/js/app.js"></script>
+</body>
+</html>
