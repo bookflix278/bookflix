@@ -1,12 +1,14 @@
-const API = "http://localhost:4000";
+const AUTH_API = window.BOOKFLIX_CONFIG?.BACKEND_URL || "http://127.0.0.1:4000";
 
-function setMsg(message) {
+function setMsg(message, ok = false) {
   const el = document.getElementById("msg");
-  if (el) el.textContent = message || "";
+  if (!el) return;
+  el.textContent = message || "";
+  el.style.color = ok ? "#7df5a6" : "#ffb4b4";
 }
 
 async function postJSON(path, data) {
-  const res = await fetch(API + path, {
+  const res = await fetch(AUTH_API + path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -42,7 +44,7 @@ async function handleLoginSubmit(e) {
     localStorage.setItem("token", out.token);
     localStorage.setItem("user", JSON.stringify(out.user));
 
-    setMsg("✅ Login realizado com sucesso!");
+    setMsg("✅ Login realizado com sucesso!", true);
     setTimeout(() => {
       window.location.href = "./index.html";
     }, 500);
@@ -66,7 +68,7 @@ async function handleRegisterSubmit(e) {
     localStorage.setItem("token", out.token);
     localStorage.setItem("user", JSON.stringify(out.user));
 
-    setMsg("✅ Conta criada com sucesso!");
+    setMsg("✅ Conta criada com sucesso!", true);
     setTimeout(() => {
       window.location.href = "./index.html";
     }, 500);
@@ -79,13 +81,8 @@ function bootAuthPage() {
   const loginForm = document.getElementById("loginForm");
   const registerForm = document.getElementById("registerForm");
 
-  if (loginForm) {
-    loginForm.addEventListener("submit", handleLoginSubmit);
-  }
-
-  if (registerForm) {
-    registerForm.addEventListener("submit", handleRegisterSubmit);
-  }
+  if (loginForm) loginForm.addEventListener("submit", handleLoginSubmit);
+  if (registerForm) registerForm.addEventListener("submit", handleRegisterSubmit);
 }
 
 document.addEventListener("DOMContentLoaded", bootAuthPage);

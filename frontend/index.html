@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bookflix</title>
   <link rel="stylesheet" href="./assets/css/style.css" />
@@ -19,9 +19,11 @@
       />
     </div>
 
-    <div class="actions">
+    <div class="actions" id="topActions">
       <button class="btn" onclick="goUpload()">Upload</button>
       <button class="btn" onclick="goBulk()">Upload em massa</button>
+      <button class="btn" onclick="goAdmin()">Admin</button>
+      <button class="btn" onclick="goLogin()">Entrar</button>
       <button class="btn btn-danger" onclick="logout()">Sair</button>
     </div>
   </header>
@@ -43,12 +45,13 @@
   </main>
 
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="modal-card" style="position:relative;">
+    <div class="modal-card">
       <button class="modal-close" onclick="closeModal()">✕</button>
       <div id="modalTop"></div>
     </div>
   </div>
 
+  <script src="./assets/js/config.js"></script>
   <script src="./assets/js/app.js"></script>
 </body>
 </html>

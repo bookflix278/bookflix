@@ -4,7 +4,9 @@ import crypto from "crypto";
 import Book from "../models/Book.js";
 import { generateCover } from "../utils/pdfCover.js";
 
-const UPLOADS_DIR = path.resolve("uploads");
+const UPLOADS_DIR = process.env.UPLOADS_DIR
+  ? path.resolve(process.env.UPLOADS_DIR)
+  : path.resolve("uploads");
 const BOOKS_DIR = path.join(UPLOADS_DIR, "books");
 const COVERS_DIR = path.join(UPLOADS_DIR, "covers");
 
@@ -73,19 +75,22 @@ export async function createBook(req, res, next) {
         mime: coverFile.mimetype,
         size: coverFile.size,
       };
-    } else if (ext === ".pdf") {
-      const pdfPath = path.join(BOOKS_DIR, file.filename);
-      const generated = await generateCover(pdfPath, COVERS_DIR);
+    } else {
+      const generated = await generateCover({
+        title: safeName(title),
+        author: safeName(author),
+        category: safeName(category),
+        coversDir: COVERS_DIR,
+      });
 
-      if (generated) {
-        const stat = await fs.stat(generated).catch(() => null);
-        cover = {
-          filename: path.basename(generated),
-          mime: "image/jpeg",
-          size: stat?.size || 0,
-        };
-      }
+      cover = {
+        filename: generated.filename,
+        mime: generated.mime,
+        size: generated.size,
+      };
     }
+
+    const filePath = path.join(BOOKS_DIR, file.filename);
 
     const book = await Book.create({
       title: safeName(title),
@@ -97,7 +102,7 @@ export async function createBook(req, res, next) {
         filename: file.filename,
         mime: fileMimeFromExt(ext),
         size: file.size,
-        sha256: await sha256File(path.join(BOOKS_DIR, file.filename)),
+        sha256: await sha256File(filePath),
       },
       uploadedBy: req.user.id,
       downloads: 0,

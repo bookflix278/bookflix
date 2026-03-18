@@ -1,0 +1,17 @@
+:root{
+  --bg:#07080b;--panel:rgba(18,21,29,.92);--line:rgba(255,255,255,.08);--text:#f2f4f8;
+  --muted:rgba(242,244,248,.68);--brand:#e50914;--brand2:#b20710;--shadow:0 20px 60px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text);background:radial-gradient(circle at 20% 10%, rgba(229,9,20,.18), transparent 35%),radial-gradient(circle at 80% 0%, rgba(255,255,255,.05), transparent 30%),#07080b}
+.wrap{width:min(1400px, 96vw);margin:24px auto 60px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:20px}.top .actions{display:flex;gap:8px;flex-wrap:wrap}
+h1{margin:0;font-size:42px;letter-spacing:-1.4px}.sub{color:var(--muted);margin-top:4px}
+.btn{border:0;cursor:pointer;padding:10px 14px;border-radius:12px;color:#fff;background:#222838;font-weight:700}.btn-primary{background:linear-gradient(180deg,var(--brand),var(--brand2))}
+.grid{display:grid;grid-template-columns: repeat(4, 1fr);gap:14px;margin-bottom:20px}
+.stat,.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:var(--shadow)}
+.stat .k{color:var(--muted);font-size:13px}.stat .v{font-size:38px;font-weight:900;margin-top:8px}
+.panel{border-radius:22px;margin-bottom:18px}.panel h2{margin:0 0 14px;font-size:24px;letter-spacing:-.5px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 10px;border-bottom:1px solid rgba(255,255,255,.06);font-size:14px;vertical-align:top}th{color:var(--muted);font-weight:700;background:var(--panel)}
+.actions{display:flex;gap:8px;flex-wrap:wrap}.mini{padding:8px 10px;border-radius:10px;border:0;cursor:pointer;font-weight:700;color:#fff;background:#2a3042}.danger{background:#8f0f16}.warn{background:#7c5c10}.ok{background:#215b2b}
+@media (max-width:1000px){.grid{grid-template-columns:1fr 1fr}}@media (max-width:700px){.grid{grid-template-columns:1fr}.top{flex-direction:column}table,thead,tbody,tr,th,td{display:block}thead{display:none}tr{border-bottom:1px solid rgba(255,255,255,.08);padding:10px 0}td{border:0;padding:6px 0}}

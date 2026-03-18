@@ -7,11 +7,17 @@ function ensureDir(p) {
   if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
 }
 
-// ✅ agora salvamos pdf/epub na mesma pasta
-const bookDir = path.resolve("uploads/books");
-const coverDir = path.resolve("uploads/covers");
+const uploadsRoot = process.env.UPLOADS_DIR
+  ? path.resolve(process.env.UPLOADS_DIR)
+  : path.resolve("uploads");
+
+const bookDir = path.join(uploadsRoot, "books");
+const coverDir = path.join(uploadsRoot, "covers");
+const zipDir = path.join(uploadsRoot, "zips");
+
 ensureDir(bookDir);
 ensureDir(coverDir);
+ensureDir(zipDir);
 
 const storage = multer.diskStorage({
   destination: (_req, file, cb) => {
@@ -27,15 +33,11 @@ const storage = multer.diskStorage({
 
 export const uploadBookFiles = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  limits: { fileSize: 50 * 1024 * 1024 },
 }).fields([
-  { name: "file", maxCount: 1 },  // ✅ pdf ou epub
-  { name: "cover", maxCount: 1 }, // ✅ opcional
+  { name: "file", maxCount: 1 },
+  { name: "cover", maxCount: 1 },
 ]);
-
-// ✅ upload em massa via ZIP (limite maior)
-const zipDir = path.resolve("uploads/zips");
-ensureDir(zipDir);
 
 const zipStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, zipDir),
@@ -46,11 +48,22 @@ const zipStorage = multer.diskStorage({
   },
 });
 
-export const uploadBulkZip = multer({
+const zipMulter = multer({
   storage: zipStorage,
-  limits: { fileSize: 800 * 1024 * 1024 }, // 800MB
+  limits: { fileSize: 800 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok = file.originalname.toLowerCase().endsWith(".zip") || file.mimetype === "application/zip";
     cb(ok ? null : new Error("Envie um arquivo .zip"), ok);
   },
-}).single("zip");
+}).fields([
+  { name: "zip", maxCount: 1 },
+  { name: "file", maxCount: 1 }
+]);
+
+export function uploadBulkZip(req, res, next) {
+  zipMulter(req, res, (err) => {
+    if (err) return next(err);
+    req.file = req.files?.zip?.[0] || req.files?.file?.[0] || null;
+    return next();
+  });
+}

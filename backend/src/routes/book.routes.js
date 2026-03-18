@@ -17,18 +17,16 @@ import { bulkUploadZip } from "../utils/zipExtract.js";
 const router = Router();
 
 router.get("/", listBooks);
-
 router.get("/top", topDownloads);
-
 router.get("/recommended", recommended);
-
 router.get("/:id", getBook);
-
 router.get("/:id/download", requireAuth, downloadBook);
 
 router.post("/", requireAuth, uploadBookFiles, createBook);
+router.post("/upload", requireAuth, uploadBookFiles, createBook);
 
 router.post("/bulk", requireAuth, uploadBulkZip, bulkUploadZip);
+router.post("/upload-zip", requireAuth, uploadBulkZip, bulkUploadZip);
 
 router.delete("/:id", requireAuth, deleteBook);
 

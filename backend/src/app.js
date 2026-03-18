@@ -3,19 +3,30 @@ import cors from "cors";
 import helmet from "helmet";
 import path from "path";
 import fs from "fs";
+import morgan from "morgan";
 
 import adminRoutes from "./routes/admin.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import authRoutes from "./routes/auth.routes.js";
 import bookRoutes from "./routes/book.routes.js";
 import { findProjectRoot, ensureDir } from "./utils/projectRoot.js";
+import { errorHandler, notFound } from "./middlewares/errorHandler.js";
 
 const app = express();
 
-// IMPORTANTE: CORS e JSON vêm antes das rotas
-app.use(cors({ origin: "*" }));
-app.use(express.json({ limit: "5mb" }));
+const PROJECT_ROOT = findProjectRoot(process.cwd());
+const UPLOADS_DIR = process.env.UPLOADS_DIR
+  ? path.resolve(process.env.UPLOADS_DIR)
+  : path.join(PROJECT_ROOT, "uploads");
+const COVERS_DIR = path.join(UPLOADS_DIR, "covers");
+const FILES_DIR = path.join(UPLOADS_DIR, "books");
 
+ensureDir(COVERS_DIR);
+ensureDir(FILES_DIR);
+
+app.use(cors({ origin: process.env.CORS_ORIGIN?.split(",").map(s => s.trim()).filter(Boolean) || "*" }));
+app.use(express.json({ limit: "5mb" }));
+app.use(morgan("dev"));
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -23,29 +34,21 @@ app.use(
   })
 );
 
-// ====== UPLOADS PATH FIX ======
-const PROJECT_ROOT = findProjectRoot(process.cwd());
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "bookflix-backend",
+    health: "/health",
+  });
+});
 
-const UPLOADS_DIR = process.env.UPLOADS_DIR
-  ? path.resolve(process.env.UPLOADS_DIR)
-  : path.join(PROJECT_ROOT, "uploads");
-
-const COVERS_DIR = path.join(UPLOADS_DIR, "covers");
-const FILES_DIR = path.join(UPLOADS_DIR, "books");
-
-ensureDir(COVERS_DIR);
-ensureDir(FILES_DIR);
-
-// Health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// API routes
 app.use("/api/admin", adminRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/books", bookRoutes);
 
-// Static files
 app.use(
   "/covers",
   express.static(COVERS_DIR, {
@@ -62,7 +65,6 @@ app.use(
   })
 );
 
-// Fallback extra para capas
 app.get("/covers/:file", (req, res) => {
   const f = req.params.file;
 
@@ -78,5 +80,8 @@ app.get("/covers/:file", (req, res) => {
 
   return res.sendFile(found);
 });
+
+app.use(notFound);
+app.use(errorHandler);
 
 export default app;
