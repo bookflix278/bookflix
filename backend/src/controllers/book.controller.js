@@ -6,90 +6,71 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-function escapeRegex(value = "") {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function formatTitle(raw) {
   if (!raw) return "Livro";
 
-  const clean = String(raw)
+  return String(raw)
     .replace(/\.(pdf|epub|mobi)$/i, "")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-
-  if (!clean) return "Livro";
-
-  if (clean.length > 20 && /^[a-f0-9]+$/i.test(clean)) {
-    return `Livro ${clean.slice(0, 6)}`;
-  }
-
-  return clean;
 }
 
 function generateCover(title = "Livro") {
-  const palettes = [
-    ["1e1e2f", "e50914"],
-    ["0f2027", "2c5364"],
-    ["232526", "414345"],
-    ["42275a", "734b6d"],
-    ["141e30", "243b55"],
-  ];
-
-  const [from, to] = palettes[Math.floor(Math.random() * palettes.length)];
-  const safeTitle = encodeURIComponent(title.slice(0, 32));
-
-  return `https://dummyimage.com/300x450/${from}/${to}.png&text=${safeTitle}`;
+  return `https://dummyimage.com/300x450/1e1e2f/e50914.png&text=${encodeURIComponent(
+    title.slice(0, 30)
+  )}`;
 }
 
 function normalizeMongoBook(book, req) {
   const obj = book.toObject ? book.toObject() : book;
   const baseUrl = `${req.protocol}://${req.get("host")}`;
 
+  const fileUrl = obj.fileUrl || obj.file_url || "";
+  const coverUrl = obj.coverUrl || obj.cover_url || generateCover(obj.title);
+
   return {
-    _id: obj._id,
     id: obj._id,
+    _id: obj._id,
     title: formatTitle(obj.title),
     author: obj.author || "Desconhecido",
     category: obj.category || "Geral",
     description: obj.description || "Livro disponível na biblioteca",
-    file_url: obj.fileUrl || obj.file_url || "",
-    fileUrl: obj.fileUrl || obj.file_url || "",
-    cover_url: obj.coverUrl || obj.cover_url || generateCover(obj.title),
-    coverUrl: obj.coverUrl || obj.cover_url || generateCover(obj.title),
-    file_type: obj.fileType || obj.file_type || "pdf",
+    fileUrl,
+    file_url: fileUrl,
+    coverUrl,
+    cover_url: coverUrl,
     fileType: obj.fileType || obj.file_type || "pdf",
-    source: "mongo",
-    created_at: obj.createdAt || new Date(),
+    file_type: obj.fileType || obj.file_type || "pdf",
     createdAt: obj.createdAt || new Date(),
-    downloadUrl:
-      obj.fileUrl?.startsWith("http") || obj.file_url?.startsWith("http")
-        ? obj.fileUrl || obj.file_url
-        : `${baseUrl}${obj.fileUrl || obj.file_url || ""}`,
+    created_at: obj.createdAt || new Date(),
+    source: "mongo",
+    downloadUrl: fileUrl.startsWith("http") ? fileUrl : `${baseUrl}${fileUrl}`,
   };
 }
 
 function normalizeSupabaseBook(book) {
-  const title = formatTitle(book.title || book.name || book.file_name || "Livro");
+  const title = formatTitle(book.title || book.name || "Livro");
+  const fileUrl = book.file_url || "";
+  const coverUrl = book.cover_url || generateCover(title);
 
   return {
-    _id: book.id,
     id: book.id,
+    _id: book.id,
     title,
     author: book.author || "Desconhecido",
     category: book.category || "Geral",
     description: book.description || "Livro disponível na biblioteca",
-    file_url: book.file_url || "",
-    fileUrl: book.file_url || "",
-    cover_url: book.cover_url || generateCover(title),
-    coverUrl: book.cover_url || generateCover(title),
-    file_type: book.file_type || "pdf",
+    fileUrl,
+    file_url: fileUrl,
+    coverUrl,
+    cover_url: coverUrl,
     fileType: book.file_type || "pdf",
-    source: "supabase",
-    created_at: book.created_at || new Date(),
+    file_type: book.file_type || "pdf",
     createdAt: book.created_at || new Date(),
-    downloadUrl: book.file_url || "",
+    created_at: book.created_at || new Date(),
+    source: "supabase",
+    downloadUrl: fileUrl,
   };
 }
 
@@ -100,8 +81,8 @@ function dedupeBooks(books = []) {
     const key =
       book.id ||
       book._id ||
-      book.file_url ||
-      `${book.title}-${book.author}-${book.created_at}`;
+      book.fileUrl ||
+      `${book.title}-${book.author}-${book.createdAt}`;
 
     if (seen.has(key)) return false;
     seen.add(key);
@@ -109,63 +90,54 @@ function dedupeBooks(books = []) {
   });
 }
 
-async function fetchSupabaseBooks(search = "") {
-  const { data, error } = await supabase.from("books").select("*").limit(500);
-
-  if (error) {
-    console.error("Supabase error:", error.message);
-    return [];
-  }
-
-  let books = (data || []).map(normalizeSupabaseBook);
-
-  if (search) {
-    const rx = new RegExp(escapeRegex(search), "i");
-    books = books.filter(
-      (b) => rx.test(b.title) || rx.test(b.author) || rx.test(b.category)
-    );
-  }
-
-  return books;
-}
-
-async function fetchMongoBooks(search = "") {
-  let mongoBooks = [];
-
-  if (search) {
-    const rx = new RegExp(escapeRegex(search), "i");
-    mongoBooks = await Book.find({
-      $or: [{ title: rx }, { author: rx }, { category: rx }],
-    }).sort({ createdAt: -1 });
-  } else {
-    mongoBooks = await Book.find().sort({ createdAt: -1 }).limit(500);
-  }
-
-  return mongoBooks;
-}
-
-export const getBooks = async (req, res) => {
+export const listBooks = async (req, res) => {
   try {
-    const search = req.query.search || "";
+    const search = (req.query.search || "").trim();
 
-    const [mongoBooks, supabaseBooks] = await Promise.all([
-      fetchMongoBooks(search),
-      fetchSupabaseBooks(search),
-    ]);
+    let mongoBooks = await Book.find().sort({ createdAt: -1 }).limit(300);
 
-    const mongoNormalized = mongoBooks.map((book) => normalizeMongoBook(book, req));
-    const allBooks = dedupeBooks([...supabaseBooks, ...mongoNormalized]).sort(
-      (a, b) => new Date(b.createdAt || b.created_at) - new Date(a.createdAt || a.created_at)
+    const { data: supaBooks, error } = await supabase
+      .from("books")
+      .select("*")
+      .limit(300);
+
+    if (error) {
+      console.error("Supabase listBooks error:", error.message);
+    }
+
+    let mongo = mongoBooks.map((b) => normalizeMongoBook(b, req));
+    let supa = (supaBooks || []).map(normalizeSupabaseBook);
+
+    if (search) {
+      const s = search.toLowerCase();
+
+      mongo = mongo.filter(
+        (b) =>
+          (b.title || "").toLowerCase().includes(s) ||
+          (b.author || "").toLowerCase().includes(s) ||
+          (b.category || "").toLowerCase().includes(s)
+      );
+
+      supa = supa.filter(
+        (b) =>
+          (b.title || "").toLowerCase().includes(s) ||
+          (b.author || "").toLowerCase().includes(s) ||
+          (b.category || "").toLowerCase().includes(s)
+      );
+    }
+
+    const allBooks = dedupeBooks([...supa, ...mongo]).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
     );
 
     return res.json(allBooks);
-  } catch (error) {
-    console.error("getBooks error:", error);
+  } catch (err) {
+    console.error("listBooks error:", err);
     return res.status(500).json({ error: "Erro ao buscar livros" });
   }
 };
 
-export const getBookById = async (req, res) => {
+export const getBook = async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -174,95 +146,91 @@ export const getBookById = async (req, res) => {
       return res.json(normalizeMongoBook(mongoBook, req));
     }
 
-    const { data, error } = await supabase.from("books").select("*").eq("id", id).single();
+    const { data, error } = await supabase
+      .from("books")
+      .select("*")
+      .eq("id", id)
+      .single();
 
     if (error || !data) {
       return res.status(404).json({ error: "Livro não encontrado" });
     }
 
     return res.json(normalizeSupabaseBook(data));
-  } catch (error) {
-    console.error("getBookById error:", error);
+  } catch (err) {
+    console.error("getBook error:", err);
     return res.status(500).json({ error: "Erro ao buscar livro" });
+  }
+};
+
+export const downloadBook = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const mongoBook = await Book.findById(id).catch(() => null);
+    if (mongoBook) {
+      const fileUrl = mongoBook.fileUrl || mongoBook.file_url;
+      if (!fileUrl) {
+        return res.status(404).json({ error: "Arquivo não encontrado" });
+      }
+      return res.redirect(fileUrl);
+    }
+
+    const { data, error } = await supabase
+      .from("books")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error || !data || !data.file_url) {
+      return res.status(404).json({ error: "Arquivo não encontrado" });
+    }
+
+    return res.redirect(data.file_url);
+  } catch (err) {
+    console.error("downloadBook error:", err);
+    return res.status(500).json({ error: "Erro ao baixar livro" });
   }
 };
 
 export const createBook = async (req, res) => {
   try {
-    const { title, author, category, description } = req.body;
+    const file = req.file;
 
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const uploadedFile = req.file;
+    const title = req.body.title || file?.originalname || "Livro";
+    const author = req.body.author || "Desconhecido";
+    const category = req.body.category || "Geral";
+    const description = req.body.description || "Livro disponível na biblioteca";
 
-    const fileUrl = uploadedFile
-      ? `/uploads/files/${uploadedFile.filename}`
-      : req.body.fileUrl || req.body.file_url || "";
+    const fileUrl =
+      req.body.fileUrl ||
+      req.body.file_url ||
+      (file ? `/uploads/files/${file.filename}` : "");
 
     const coverUrl =
       req.body.coverUrl ||
       req.body.cover_url ||
-      generateCover(title || uploadedFile?.originalname || "Livro");
+      generateCover(formatTitle(title));
 
     const fileType =
       req.body.fileType ||
       req.body.file_type ||
-      uploadedFile?.mimetype?.includes("epub")
-        ? "epub"
-        : "pdf";
+      (file?.mimetype?.includes("epub") ? "epub" : "pdf");
 
     const newBook = await Book.create({
-      title: formatTitle(title || uploadedFile?.originalname || "Livro"),
-      author: author || "Desconhecido",
-      category: category || "Geral",
-      description: description || "Livro disponível na biblioteca",
+      title: formatTitle(title),
+      author,
+      category,
+      description,
       fileUrl,
       coverUrl,
       fileType,
     });
 
-    const normalized = normalizeMongoBook(newBook, req);
-
-    if (normalized.fileUrl && !normalized.fileUrl.startsWith("http")) {
-      normalized.downloadUrl = `${baseUrl}${normalized.fileUrl}`;
-    }
-
-    return res.status(201).json(normalized);
-  } catch (error) {
-    console.error("createBook error:", error);
+    return res.status(201).json(normalizeMongoBook(newBook, req));
+  } catch (err) {
+    console.error("createBook error:", err);
     return res.status(500).json({ error: "Erro ao criar livro" });
-  }
-};
-
-export const updateBook = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const updates = {};
-    if (req.body.title !== undefined) updates.title = formatTitle(req.body.title);
-    if (req.body.author !== undefined) updates.author = req.body.author || "Desconhecido";
-    if (req.body.category !== undefined) updates.category = req.body.category || "Geral";
-    if (req.body.description !== undefined)
-      updates.description = req.body.description || "Livro disponível na biblioteca";
-    if (req.body.fileUrl !== undefined || req.body.file_url !== undefined)
-      updates.fileUrl = req.body.fileUrl || req.body.file_url;
-    if (req.body.coverUrl !== undefined || req.body.cover_url !== undefined)
-      updates.coverUrl = req.body.coverUrl || req.body.cover_url;
-    if (req.body.fileType !== undefined || req.body.file_type !== undefined)
-      updates.fileType = req.body.fileType || req.body.file_type;
-
-    const book = await Book.findByIdAndUpdate(id, updates, {
-      new: true,
-      runValidators: true,
-    });
-
-    if (!book) {
-      return res.status(404).json({ error: "Livro não encontrado para atualizar" });
-    }
-
-    return res.json(normalizeMongoBook(book, req));
-  } catch (error) {
-    console.error("updateBook error:", error);
-    return res.status(500).json({ error: "Erro ao atualizar livro" });
   }
 };
 
@@ -273,50 +241,48 @@ export const deleteBook = async (req, res) => {
     const deleted = await Book.findByIdAndDelete(id);
 
     if (!deleted) {
-      return res.status(404).json({ error: "Livro não encontrado para excluir" });
+      return res.status(404).json({ error: "Livro não encontrado" });
     }
 
-    return res.json({ ok: true, message: "Livro removido com sucesso" });
-  } catch (error) {
-    console.error("deleteBook error:", error);
+    return res.json({ ok: true, message: "Livro excluído com sucesso" });
+  } catch (err) {
+    console.error("deleteBook error:", err);
     return res.status(500).json({ error: "Erro ao excluir livro" });
   }
 };
 
-export const getTopBooks = async (req, res) => {
+export const topDownloads = async (req, res) => {
   try {
-    const [mongoBooks, supabaseBooks] = await Promise.all([
-      Book.find().sort({ createdAt: -1 }).limit(20),
-      fetchSupabaseBooks(""),
-    ]);
+    const mongoBooks = await Book.find().sort({ createdAt: -1 }).limit(20);
+    const { data: supaBooks } = await supabase.from("books").select("*").limit(20);
 
-    const mongoNormalized = mongoBooks.map((book) => normalizeMongoBook(book, req));
-    const allBooks = dedupeBooks([...supabaseBooks, ...mongoNormalized])
-      .sort((a, b) => new Date(b.createdAt || b.created_at) - new Date(a.createdAt || a.created_at))
-      .slice(0, 20);
+    const mongo = mongoBooks.map((b) => normalizeMongoBook(b, req));
+    const supa = (supaBooks || []).map(normalizeSupabaseBook);
+
+    const allBooks = dedupeBooks([...supa, ...mongo]).slice(0, 20);
 
     return res.json(allBooks);
-  } catch (error) {
-    console.error("getTopBooks error:", error);
-    return res.status(500).json({ error: "Erro ao buscar destaques" });
+  } catch (err) {
+    console.error("topDownloads error:", err);
+    return res.status(500).json({ error: "Erro ao buscar top livros" });
   }
 };
 
-export const getRecommendedBooks = async (req, res) => {
+export const recommended = async (req, res) => {
   try {
-    const [mongoBooks, supabaseBooks] = await Promise.all([
-      Book.find().sort({ createdAt: -1 }).limit(20),
-      fetchSupabaseBooks(""),
-    ]);
+    const mongoBooks = await Book.find().sort({ createdAt: -1 }).limit(20);
+    const { data: supaBooks } = await supabase.from("books").select("*").limit(20);
 
-    const mongoNormalized = mongoBooks.map((book) => normalizeMongoBook(book, req));
-    const allBooks = dedupeBooks([...supabaseBooks, ...mongoNormalized])
+    const mongo = mongoBooks.map((b) => normalizeMongoBook(b, req));
+    const supa = (supaBooks || []).map(normalizeSupabaseBook);
+
+    const allBooks = dedupeBooks([...supa, ...mongo])
       .sort(() => Math.random() - 0.5)
       .slice(0, 20);
 
     return res.json(allBooks);
-  } catch (error) {
-    console.error("getRecommendedBooks error:", error);
-    return res.status(500).json({ error: "Erro ao buscar recomendações" });
+  } catch (err) {
+    console.error("recommended error:", err);
+    return res.status(500).json({ error: "Erro ao buscar recomendados" });
   }
 };
