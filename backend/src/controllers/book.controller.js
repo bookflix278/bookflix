@@ -128,7 +128,7 @@ export async function listBooks(req, res, next) {
     const filter = { status: "active" };
     if (category) filter.category = category;
     if (search) {
-      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\]/g, "\$&"), "i");
+      const rx = new RegExp(search, 'i');
       filter.$or = [{ title: rx }, { author: rx }, { category: rx }];
     }
 
