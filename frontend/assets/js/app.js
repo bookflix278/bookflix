@@ -1,9 +1,8 @@
-const CONFIG = window.BOOKFLIX_CONFIG || {};
-const SUPABASE_URL = CONFIG.SUPABASE_URL || "";
-const SUPABASE_KEY = CONFIG.SUPABASE_ANON_KEY || "";
+const API = window.BOOKFLIX_CONFIG?.BACKEND_URL || "https://bookflix-1-52pt.onrender.com";
 
 const rowsEl = document.getElementById("rows");
 const searchInput = document.getElementById("searchInput");
+
 const heroBg = document.getElementById("heroBg");
 const heroTitle = document.getElementById("heroTitle");
 const heroMeta = document.getElementById("heroMeta");
@@ -15,7 +14,17 @@ let searchTimer = null;
 let heroTimer = null;
 let heroBooks = [];
 let heroIndex = 0;
+
 let currentBooks = [];
+let currentTopBooks = [];
+let currentRecommendedBooks = [];
+
+let serverFavorites = [];
+let currentUser = null;
+
+function token() {
+  return localStorage.getItem("token") || "";
+}
 
 function getUser() {
   try {
@@ -26,16 +35,36 @@ function getUser() {
   }
 }
 
-function escapeHtml(s) {
-  return String(s || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+function coverUrl(book) {
+  if (book?.cover_url) return book.cover_url;
+  if (book?.cover?.filename) return `${API}/covers/${book.cover.filename}`;
+  if (book?.cover?.url) return book.cover.url;
+  return "";
 }
 
-function normalizeText(v) {
+function goUpload() {
+  window.location.href = "upload.html";
+}
+
+function goBulk() {
+  window.location.href = "bulk.html";
+}
+
+function goAdmin() {
+  window.location.href = "admin.html";
+}
+
+function logout() {
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  window.location.href = "login.html";
+}
+
+function goLogin() {
+  window.location.href = "login.html";
+}
+
+function normalizeSortText(v) {
   return String(v || "")
     .trim()
     .toLocaleLowerCase("pt-BR")
@@ -43,55 +72,16 @@ function normalizeText(v) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-function normalizeBook(book) {
-  return {
-    id: book.id,
-    title: book.title || "Sem título",
-    author: book.author || "Autor desconhecido",
-    category: book.category || "Geral",
-    description: book.description || "Sem descrição.",
-    cover_url: book.cover_url || "",
-    file_url: book.file_url || "",
-    file_type: book.file_type || "pdf",
-    created_at: book.created_at || null,
-  };
-}
-
-function coverUrl(book) {
-  return book?.cover_url || "";
-}
-
-function goUpload() {
-  location.href = "upload.html";
-}
-
-function goBulk() {
-  location.href = "bulk.html";
-}
-
-function goLogin() {
-  location.href = "login.html";
-}
-
-function goAdmin() {
-  location.href = "admin.html";
-}
-
-function logout() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
-  location.href = "login.html";
-}
-
 function sortAlpha(a, b) {
-  return normalizeText(a).localeCompare(normalizeText(b), "pt-BR", {
+  return normalizeSortText(a).localeCompare(normalizeSortText(b), "pt-BR", {
     sensitivity: "base",
   });
 }
 
 function firstLetterBucket(title = "") {
-  const t = normalizeText(title);
+  const t = normalizeSortText(title);
   const ch = (t[0] || "#").toUpperCase();
+
   if ("ABCDE".includes(ch)) return "A–E";
   if ("FGHIJ".includes(ch)) return "F–J";
   if ("KLMNO".includes(ch)) return "K–O";
@@ -100,68 +90,145 @@ function firstLetterBucket(title = "") {
   return "Outros títulos";
 }
 
-function ensureTopButtons() {
-  const user = getUser();
-  const buttons = topActions?.querySelectorAll("button") || [];
-  buttons.forEach((btn) => {
-    if (btn.textContent === "Sair") {
-      btn.style.display = user ? "inline-flex" : "none";
-    }
-    if (btn.textContent === "Entrar") {
-      btn.style.display = user ? "none" : "inline-flex";
-    }
-    if (btn.textContent === "Admin") {
-      btn.style.display = user?.role === "admin" ? "inline-flex" : "none";
-    }
-  });
+function isFavorite(bookId) {
+  return serverFavorites.some((b) => (b._id || b.id) === bookId);
 }
 
-async function fetchBooks() {
-  if (!SUPABASE_URL || !SUPABASE_KEY || SUPABASE_KEY.includes("COLE_AQUI")) {
-    throw new Error("Abra assets/js/config.js e cole sua anon public key do Supabase.");
+async function safeFetchJSON(url, options = {}) {
+  const res = await fetch(url, options);
+  let data = null;
+
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
   }
 
-  const url = `${SUPABASE_URL}/rest/v1/books?select=*&order=created_at.desc.nullslast&limit=5000`;
-  const res = await fetch(url, {
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      Accept: "application/json",
-    },
-  });
-
-  const data = await res.json().catch(() => []);
   if (!res.ok) {
-    throw new Error(data?.message || data?.error_description || "Não foi possível carregar os livros.");
+    throw new Error(data?.error || `Erro ${res.status}`);
   }
 
-  return data.map(normalizeBook);
+  return data;
+}
+
+async function fetchMe() {
+  const t = token();
+  if (!t) return null;
+
+  try {
+    const data = await safeFetchJSON(`${API}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${t}` },
+    });
+    return data.user || null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchFavorites() {
+  const t = token();
+  if (!t) return [];
+
+  try {
+    const data = await safeFetchJSON(`${API}/api/user/favorites`, {
+      headers: { Authorization: `Bearer ${t}` },
+    });
+    return data.favorites || [];
+  } catch {
+    return [];
+  }
+}
+
+async function toggleFavorite(bookId) {
+  const t = token();
+  if (!t) return goLogin();
+
+  try {
+    const data = await safeFetchJSON(`${API}/api/user/favorite/${bookId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${t}` },
+    });
+
+    serverFavorites = data.favorites || [];
+    renderAll(currentBooks, currentTopBooks, currentRecommendedBooks);
+  } catch (err) {
+    alert(err.message || "Não foi possível atualizar favoritos.");
+  }
+}
+
+async function fetchBooks(search = "") {
+  const url = new URL(`${API}/api/books`);
+  if (search) url.searchParams.set("search", search);
+  url.searchParams.set("limit", "500");
+  url.searchParams.set("sort", "recent");
+
+  const data = await safeFetchJSON(url);
+  return data.books || [];
+}
+
+async function fetchTopBooks() {
+  try {
+    const data = await safeFetchJSON(`${API}/api/books/top`);
+    return data.books || [];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchRecommended() {
+  try {
+    const data = await safeFetchJSON(`${API}/api/books/recommended`);
+    return data.books || [];
+  } catch {
+    return [];
+  }
 }
 
 function getHeroCandidates(books) {
-  return [...books].filter((b) => b?.title).slice(0, 10);
+  return [...books]
+    .filter((b) => b?.title)
+    .sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
+    .slice(0, 8);
+}
+
+function ensureTopButtons() {
+  const user = currentUser || getUser();
+  const buttons = topActions?.querySelectorAll("button") || [];
+  buttons.forEach((btn) => {
+    if (btn.textContent === "Sair") btn.style.display = user ? "inline-flex" : "none";
+    if (btn.textContent === "Entrar") btn.style.display = user ? "none" : "inline-flex";
+    if (btn.textContent === "Admin") btn.style.display = user?.role === "admin" ? "inline-flex" : "none";
+  });
 }
 
 function renderHeroBook(book) {
-  const user = getUser();
-
   if (!book) {
     heroTitle.textContent = "Bookflix";
     heroMeta.textContent = "Biblioteca digital pública";
-    heroDesc.textContent = "Nenhum livro encontrado.";
+    heroDesc.textContent = "Nenhum livro cadastrado ainda. Faça um upload para começar.";
     heroActions.innerHTML = `<button class="btn btn-primary" onclick="goUpload()">Enviar primeiro livro</button>`;
     heroBg.style.backgroundImage = "";
     return;
   }
 
-  heroBg.style.backgroundImage = book.cover_url ? `url('${book.cover_url}')` : "";
-  heroTitle.textContent = book.title;
-  heroMeta.textContent = `${user?.name ? `Olá, ${user.name}` : "Biblioteca digital"} • ${book.author} • ${book.category}`;
-  heroDesc.textContent = (book.description || "Sem descrição.").slice(0, 240);
+  const img = coverUrl(book);
+  const fav = isFavorite(book._id || book.id);
+  const hello = currentUser?.name ? `Olá, ${currentUser.name}` : "Biblioteca digital";
+  const adminBtn =
+    currentUser?.role === "admin"
+      ? `<button class="btn" onclick="location.href='admin.html'">Painel admin</button>`
+      : "";
+
+  heroBg.style.backgroundImage = img ? `url('${img}')` : "";
+  heroTitle.textContent = book.title || "Sem título";
+  heroMeta.textContent = `${hello} • ${book.author || "Autor"} • ${book.category || "Geral"} • ${book.downloads ?? 0} downloads`;
+  heroDesc.textContent = (book.description || "Importado para sua biblioteca digital.").slice(0, 240);
+
   heroActions.innerHTML = `
-    <button class="btn btn-primary" onclick="openModalById('${book.id}')">Ver detalhes</button>
-    <button class="btn" onclick="openBook('${book.file_url}')">Ler livro</button>
-    <button class="btn" onclick="downloadBook('${book.file_url}','${escapeHtml(book.title)}')">Baixar</button>
+    <button class="btn btn-primary" onclick="openModalById('${book._id || book.id}')">Ver detalhes</button>
+    <button class="btn" onclick="tryDownload('${book._id || book.id}')">Download</button>
+    <button class="btn" onclick="toggleFavorite('${book._id || book.id}')">${fav ? "❤ Favorito" : "♡ Favoritar"}</button>
+    ${adminBtn}
   `;
 }
 
@@ -186,22 +253,37 @@ function startHeroRotation(books) {
 
 function makeBookCard(book) {
   const img = coverUrl(book);
+  const fav = isFavorite(book._id || book.id);
+
   return `
-    <div class="card" onclick="openModalById('${book.id}')">
+    <div class="card" onclick="openModalById('${book._id || book.id}')">
       <div class="cover">
-        ${img ? `<img src="${img}" alt="${escapeHtml(book.title)}" loading="lazy"/>` : `<div class="no-cover">Sem capa</div>`}
+        ${
+          img
+            ? `<img src="${img}" alt="${escapeHtml(book.title || "capa")}" loading="lazy"/>`
+            : `<div class="no-cover">Sem capa</div>`
+        }
+        <button class="fav-chip ${fav ? "active" : ""}" onclick="event.stopPropagation(); toggleFavorite('${book._id || book.id}')">
+          ${fav ? "❤" : "♡"}
+        </button>
       </div>
       <div class="card-info">
-        <p class="card-title">${escapeHtml(book.title)}</p>
-        <p class="card-author">${escapeHtml(book.author)}</p>
+        <p class="card-title">${escapeHtml(book.title || "Sem título")}</p>
+        <p class="card-author">${escapeHtml(book.author || "Desconhecido")}</p>
       </div>
     </div>
   `;
 }
 
-function buildSections(books) {
+function buildSections(books, topBooks, recommendedBooks) {
   const sorted = [...books].sort((a, b) => sortAlpha(a.title, b.title));
-  const recent = [...books].slice(0, 24);
+
+  const recent = [...books]
+    .sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0))
+    .slice(0, 24);
+
+  const withoutCover = sorted.filter((b) => !coverUrl(b)).slice(0, 24);
+
   const buckets = {
     "A–E": [],
     "F–J": [],
@@ -216,62 +298,110 @@ function buildSections(books) {
   }
 
   const sections = [];
-  if (recent.length) sections.push({ title: "Adicionados recentemente", items: recent });
+
+  if (serverFavorites.length) {
+    sections.push({ title: "Seus favoritos", items: serverFavorites.slice(0, 24) });
+  }
+
+  if (recent.length) {
+    sections.push({ title: "Adicionados recentemente", items: recent });
+  }
+
+  if (topBooks.length) {
+    sections.push({ title: "Mais baixados", items: topBooks });
+  }
+
+  if (recommendedBooks.length) {
+    sections.push({ title: "Recomendados para você", items: recommendedBooks });
+  }
 
   for (const title of ["A–E", "F–J", "K–O", "P–T", "U–Z", "Outros títulos"]) {
-    if (buckets[title].length) sections.push({ title, items: buckets[title].slice(0, 80) });
+    if (buckets[title].length) {
+      sections.push({ title, items: buckets[title] });
+    }
+  }
+
+  if (withoutCover.length) {
+    sections.push({ title: "Sem capa", items: withoutCover });
   }
 
   return sections;
 }
 
-function renderRows(books) {
+function renderRows(books, topBooks, recommendedBooks) {
   rowsEl.innerHTML = "";
-  const sections = buildSections(books);
+
+  const sections = buildSections(books, topBooks, recommendedBooks);
 
   if (!sections.length) {
-    rowsEl.innerHTML = `<section class="row"><div class="empty-state">Nada encontrado.</div></section>`;
+    rowsEl.innerHTML = `<div class="row-title">Nada encontrado</div>`;
     return;
   }
 
-  rowsEl.innerHTML = sections.map((section) => `
-    <section class="row">
-      <div class="row-title">${section.title}</div>
-      <div class="rail">
-        ${section.items.map(makeBookCard).join("")}
-      </div>
-    </section>
-  `).join("");
+  rowsEl.innerHTML = sections
+    .map(
+      (section) => `
+        <section class="row">
+          <div class="row-title">${section.title}</div>
+          <div class="rail">
+            ${section.items.map(makeBookCard).join("")}
+          </div>
+        </section>
+      `
+    )
+    .join("");
 }
 
-function renderAll(books) {
+function renderAll(books, topBooks = [], recommendedBooks = []) {
   currentBooks = books;
+  currentTopBooks = topBooks;
+  currentRecommendedBooks = recommendedBooks;
+
   ensureTopButtons();
   startHeroRotation(books);
-  renderRows(books);
+  renderRows(books, topBooks, recommendedBooks);
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function openModal(book) {
   const modal = document.getElementById("modal");
   const modalTop = document.getElementById("modalTop");
   const img = coverUrl(book);
+  const fav = isFavorite(book._id || book.id);
+
+  const canDownload = !!token();
+  const dlBtn = canDownload
+    ? `<button class="btn btn-primary" onclick="tryDownload('${book._id || book.id}')">Download</button>`
+    : `<button class="btn" onclick="goLogin()">Entrar para baixar</button>`;
 
   modalTop.innerHTML = `
     <div class="modal-body">
       <div class="modal-cover">
-        ${img ? `<img src="${img}" alt="${escapeHtml(book.title)}"/>` : `<div class="cover inline-cover"><div class="no-cover">Sem capa</div></div>`}
+        ${
+          img
+            ? `<img src="${img}" alt="${escapeHtml(book.title || "capa")}"/>`
+            : `<div class="cover" style="aspect-ratio:2/3"><div class="no-cover">Sem capa</div></div>`
+        }
       </div>
       <div class="modal-content">
-        <h2 class="modal-title">${escapeHtml(book.title)}</h2>
+        <h2 class="modal-title">${escapeHtml(book.title || "Sem título")}</h2>
         <div class="modal-meta">
-          <span class="pill">${escapeHtml(book.author)}</span>
-          <span class="pill">${escapeHtml(book.category)}</span>
-          <span class="pill">${escapeHtml(book.file_type.toUpperCase())}</span>
+          <span class="pill">${escapeHtml(book.author || "Autor")}</span>
+          <span class="pill">${escapeHtml(book.category || "Geral")}</span>
+          <span class="pill">${book.downloads ?? 0} downloads</span>
         </div>
         <p class="modal-desc">${escapeHtml(book.description || "Sem descrição.")}</p>
         <div class="modal-actions">
-          <button class="btn btn-primary" onclick="openBook('${book.file_url}')">Ler livro</button>
-          <button class="btn" onclick="downloadBook('${book.file_url}','${escapeHtml(book.title)}')">Baixar</button>
+          ${dlBtn}
+          <button class="btn" onclick="toggleFavorite('${book._id || book.id}')">${fav ? "❤ Favorito" : "♡ Favoritar"}</button>
           <button class="btn" onclick="closeModal()">Fechar</button>
         </div>
       </div>
@@ -288,48 +418,57 @@ function closeModal() {
   modal.classList.add("hidden");
 }
 
-function openModalById(id) {
-  const book = currentBooks.find((item) => item.id === id);
-  if (book) openModal(book);
+async function openModalById(id) {
+  try {
+    const data = await safeFetchJSON(`${API}/api/books/${id}`);
+    if (data?.book) openModal(data.book);
+  } catch (err) {
+    alert(err.message || "Não foi possível abrir o livro.");
+  }
 }
 
-function openBook(url) {
-  if (!url) return;
-  window.open(url, "_blank", "noopener,noreferrer");
-}
+async function tryDownload(id) {
+  const t = token();
+  if (!t) return goLogin();
 
-function downloadBook(url, title = "livro") {
-  if (!url) return;
+  const res = await fetch(`${API}/api/books/${id}/download`, {
+    headers: { Authorization: `Bearer ${t}` },
+  });
+
+  if (!res.ok) {
+    alert("Você precisa entrar novamente para baixar.");
+    return;
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.target = "_blank";
-  a.rel = "noopener noreferrer";
-  a.download = title;
+  a.download = "livro";
   document.body.appendChild(a);
   a.click();
   a.remove();
-}
-
-function filterBooks(query) {
-  const q = normalizeText(query);
-  if (!q) return currentBooks;
-  return currentBooks.filter((book) => {
-    const haystack = normalizeText(`${book.title} ${book.author} ${book.category} ${book.description}`);
-    return haystack.includes(q);
-  });
+  URL.revokeObjectURL(url);
 }
 
 async function init() {
   try {
-    ensureTopButtons();
-    const books = await fetchBooks();
-    currentBooks = books;
-    renderAll(books);
+    currentUser = await fetchMe();
+    if (!currentUser) {
+      currentUser = getUser();
+    }
+
+    const [books, topBooks, recommendedBooks, favorites] = await Promise.all([
+      fetchBooks(""),
+      fetchTopBooks(),
+      fetchRecommended(),
+      fetchFavorites(),
+    ]);
+
+    serverFavorites = favorites;
+    renderAll(books, topBooks, recommendedBooks);
   } catch (e) {
-    heroTitle.textContent = "Bookflix";
-    heroMeta.textContent = "Configuração pendente";
-    heroDesc.textContent = e.message;
-    rowsEl.innerHTML = `<section class="row"><div class="empty-state">${escapeHtml(e.message)}</div></section>`;
+    heroDesc.textContent = "Erro ao carregar. Verifique se o backend está rodando e se o CORS foi liberado.";
     console.error(e);
   }
 }
@@ -337,11 +476,19 @@ async function init() {
 searchInput?.addEventListener("input", (e) => {
   const q = e.target.value.trim();
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    const filtered = filterBooks(q);
-    renderRows(filtered);
-    renderHeroBook(filtered[0] || currentBooks[0]);
-  }, 200);
+
+  searchTimer = setTimeout(async () => {
+    try {
+      const [books, topBooks, recommendedBooks] = await Promise.all([
+        fetchBooks(q),
+        fetchTopBooks(),
+        fetchRecommended(),
+      ]);
+      renderAll(books, topBooks, recommendedBooks);
+    } catch (e) {
+      console.error(e);
+    }
+  }, 250);
 });
 
 document.getElementById("modal")?.addEventListener("click", (e) => {
@@ -349,12 +496,13 @@ document.getElementById("modal")?.addEventListener("click", (e) => {
 });
 
 init();
+
 window.closeModal = closeModal;
 window.logout = logout;
 window.goUpload = goUpload;
 window.goBulk = goBulk;
-window.goLogin = goLogin;
 window.goAdmin = goAdmin;
+window.goLogin = goLogin;
+window.tryDownload = tryDownload;
 window.openModalById = openModalById;
-window.openBook = openBook;
-window.downloadBook = downloadBook;
+window.toggleFavorite = toggleFavorite;
