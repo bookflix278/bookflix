@@ -10,6 +10,7 @@
     "backfill:pdf-covers": "node src/scripts/backfillPdfCovers.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.99.2",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -23,8 +24,7 @@
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
     "unzipper": "^0.12.3",
-    "zod": "^4.3.6",
-    "@supabase/supabase-js": "^2.56.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

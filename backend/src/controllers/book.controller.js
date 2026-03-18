@@ -1,264 +1,83 @@
-import fs from "fs/promises";
-import path from "path";
-import crypto from "crypto";
-import mongoose from "mongoose";
-import Book from "../models/Book.js";
-import { generateCover } from "../utils/pdfCover.js";
-import { listSupabaseBooks, getSupabaseBookById, getSupabaseTopBooks, getSupabaseRecommended } from "../utils/supabaseBooks.js";
+import { createClient } from '@supabase/supabase-js';
+import Book from '../models/Book.js';
 
-const UPLOADS_DIR = process.env.UPLOADS_DIR
-  ? path.resolve(process.env.UPLOADS_DIR)
-  : path.resolve("uploads");
-const BOOKS_DIR = path.join(UPLOADS_DIR, "books");
-const COVERS_DIR = path.join(UPLOADS_DIR, "covers");
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
-function safeName(name = "") {
-  return name.replace(/[\\/:*?"<>|]+/g, "_").trim();
+function generateCover(title) {
+  const colors = [
+    "ff416c,ff4b2b",
+    "1e3c72,2a5298",
+    "11998e,38ef7d",
+    "ee0979,ff6a00"
+  ];
+
+  const pick = colors[Math.floor(Math.random() * colors.length)];
+
+  return `https://dummyimage.com/300x450/${pick.replace(",", "/")}/ffffff&text=${encodeURIComponent(title)}`;
 }
 
-function extFromName(name = "") {
-  return path.extname(name).toLowerCase();
-}
+function formatTitle(raw) {
+  if (!raw) return "Livro";
 
-function fileMimeFromExt(ext) {
-  if (ext === ".pdf") return "application/pdf";
-  if (ext === ".epub") return "application/epub+zip";
-  return "application/octet-stream";
-}
-
-function detectCategory(title = "") {
-  const t = title.toLowerCase();
-
-  if (t.includes("amor") || t.includes("romance")) return "Romance";
-  if (t.includes("historia") || t.includes("história")) return "História";
-  if (t.includes("python") || t.includes("program")) return "Tecnologia";
-  if (t.includes("filosof")) return "Filosofia";
-  if (t.includes("relig")) return "Religião";
-  if (t.includes("negocio") || t.includes("business")) return "Negócios";
-
-  return "Geral";
-}
-
-async function sha256File(filePath) {
-  const data = await fs.readFile(filePath);
-  return crypto.createHash("sha256").update(data).digest("hex");
-}
-
-export async function createBook(req, res, next) {
-  try {
-    const { title, author, description } = req.body;
-    let { category } = req.body;
-
-    const file = req.files?.file?.[0];
-    const coverFile = req.files?.cover?.[0];
-
-    if (!file) {
-      return res.status(400).json({ error: "Arquivo do livro é obrigatório." });
-    }
-
-    if (!title || !author || !description) {
-      return res.status(400).json({ error: "Preencha título, autor e descrição." });
-    }
-
-    const ext = extFromName(file.originalname || file.filename);
-    if (![".pdf", ".epub"].includes(ext)) {
-      return res.status(400).json({ error: "Envie apenas PDF ou EPUB." });
-    }
-
-    if (!category || !category.trim()) {
-      category = detectCategory(title);
-    }
-
-    let cover = null;
-
-    if (coverFile) {
-      cover = {
-        filename: coverFile.filename,
-        mime: coverFile.mimetype,
-        size: coverFile.size,
-      };
-    } else {
-      const generated = await generateCover({
-        title: safeName(title),
-        author: safeName(author),
-        category: safeName(category),
-        coversDir: COVERS_DIR,
-      });
-
-      cover = {
-        filename: generated.filename,
-        mime: generated.mime,
-        size: generated.size,
-      };
-    }
-
-    const filePath = path.join(BOOKS_DIR, file.filename);
-
-    const book = await Book.create({
-      title: safeName(title),
-      author: safeName(author),
-      category: safeName(category),
-      description: String(description).trim(),
-      cover,
-      file: {
-        filename: file.filename,
-        mime: fileMimeFromExt(ext),
-        size: file.size,
-        sha256: await sha256File(filePath),
-      },
-      uploadedBy: req.user.id,
-      downloads: 0,
-      status: "active",
-    });
-
-    return res.status(201).json({ book });
-  } catch (err) {
-    return next(err);
+  if (raw.length > 20 && /^[a-f0-9]+$/i.test(raw)) {
+    return `Livro ${raw.slice(0, 6)}`;
   }
+
+  return raw.replace(/[_-]/g, " ");
 }
 
-export async function listBooks(req, res, next) {
+export const getBooks = async (req, res) => {
   try {
-    const { search = "", category = "", sort = "recent", limit = "200", page = "1" } = req.query;
+    const { search } = req.query;
 
-    const lim = Math.min(500, Math.max(1, parseInt(limit, 10) || 200));
-    const pg = Math.max(1, parseInt(page, 10) || 1);
-    const skip = (pg - 1) * lim;
+    let mongoBooks = [];
 
-    const filter = { status: "active" };
-    if (category) filter.category = category;
     if (search) {
       const rx = new RegExp(search, 'i');
-      filter.$or = [{ title: rx }, { author: rx }, { category: rx }];
+
+      mongoBooks = await Book.find({
+        $or: [
+          { title: rx },
+          { author: rx },
+          { category: rx }
+        ]
+      });
+    } else {
+      mongoBooks = await Book.find()
+        .sort({ createdAt: -1 })
+        .limit(100);
     }
 
-    const sortMap = {
-      recent: { createdAt: -1 },
-      downloads: { downloads: -1, createdAt: -1 },
-      az: { title: 1 },
-    };
+    let supabaseBooks = [];
 
-    const [mongoBooks, mongoTotal, supabaseResult] = await Promise.all([
-      Book.find(filter)
-        .populate("uploadedBy", "name")
-        .sort(sortMap[sort] || sortMap.recent)
-        .skip(skip)
-        .limit(lim),
-      Book.countDocuments(filter),
-      listSupabaseBooks({ search, category, sort, limit: lim, page: pg }).catch(() => ({ books: [], total: 0, totalPages: 0, page: pg }))
-    ]);
+    const { data, error } = await supabase
+      .from('books')
+      .select('*')
+      .limit(200);
 
-    const books = [...(mongoBooks || []), ...(supabaseResult.books || [])];
-    const total = mongoTotal + (supabaseResult.total || 0);
-
-    return res.json({
-      books,
-      page: pg,
-      total,
-      totalPages: Math.ceil(total / lim),
-    });
-  } catch (err) {
-    return next(err);
-  }
-}
-
-export async function getBook(req, res, next) {
-  try {
-    const id = req.params.id;
-    let book = null;
-
-    if (id.startsWith("sb_")) {
-      book = await getSupabaseBookById(id);
-    } else if (mongoose.Types.ObjectId.isValid(id)) {
-      book = await Book.findById(id).populate("uploadedBy", "name");
+    if (!error && data) {
+      supabaseBooks = data.map((b) => ({
+        _id: b.id,
+        title: formatTitle(b.title || b.name),
+        author: b.author || "Desconhecido",
+        category: b.category || "Geral",
+        description: b.description || "Livro disponível na biblioteca",
+        fileUrl: b.file_url,
+        coverUrl: b.cover_url || generateCover(b.title || "Livro"),
+        createdAt: b.created_at || new Date(),
+        source: "supabase"
+      }));
     }
 
-    if (!book || book.status !== "active") {
-      return res.status(404).json({ error: "Livro não encontrado." });
-    }
-    return res.json({ book });
+    const allBooks = [...supabaseBooks, ...mongoBooks];
+
+    res.json(allBooks);
+
   } catch (err) {
-    return next(err);
+    console.error(err);
+    res.status(500).json({ error: "Erro ao buscar livros" });
   }
-}
-
-export async function downloadBook(req, res, next) {
-  try {
-    const id = req.params.id;
-
-    if (id.startsWith("sb_")) {
-      const book = await getSupabaseBookById(id);
-      if (!book || !book.file?.externalUrl) {
-        return res.status(404).json({ error: "Livro não encontrado." });
-      }
-      return res.redirect(book.file.externalUrl);
-    }
-
-    const book = await Book.findById(id);
-    if (!book || book.status !== "active") {
-      return res.status(404).json({ error: "Livro não encontrado." });
-    }
-
-    const filePath = path.join(BOOKS_DIR, book.file.filename);
-
-    book.downloads += 1;
-    await book.save();
-
-    const ext = extFromName(book.file.filename);
-    const downloadName = `${safeName(book.title)}${ext}`;
-
-    return res.download(filePath, downloadName);
-  } catch (err) {
-    return next(err);
-  }
-}
-
-export async function topDownloads(req, res, next) {
-  try {
-    const [mongoBooks, supabaseBooks] = await Promise.all([
-      Book.find({ status: "active" })
-        .populate("uploadedBy", "name")
-        .sort({ downloads: -1, createdAt: -1 })
-        .limit(20),
-      getSupabaseTopBooks(20).catch(() => [])
-    ]);
-
-    return res.json({ books: [...mongoBooks, ...supabaseBooks].slice(0, 20) });
-  } catch (err) {
-    return next(err);
-  }
-}
-
-export async function recommended(req, res, next) {
-  try {
-    const [mongoBooks, supabaseBooks] = await Promise.all([
-      Book.find({ status: "active" })
-        .populate("uploadedBy", "name")
-        .sort({ createdAt: -1, downloads: -1 })
-        .limit(20),
-      getSupabaseRecommended(20).catch(() => [])
-    ]);
-
-    return res.json({ books: [...mongoBooks, ...supabaseBooks].slice(0, 20) });
-  } catch (err) {
-    return next(err);
-  }
-}
-
-export async function deleteBook(req, res, next) {
-  try {
-    const book = await Book.findById(req.params.id);
-    if (!book) return res.status(404).json({ error: "Livro não encontrado." });
-
-    const filePath = path.join(BOOKS_DIR, book.file?.filename || "");
-    const coverPath = path.join(COVERS_DIR, book.cover?.filename || "");
-
-    await fs.unlink(filePath).catch(() => {});
-    await fs.unlink(coverPath).catch(() => {});
-    await Book.deleteOne({ _id: book._id });
-
-    return res.json({ ok: true });
-  } catch (err) {
-    return next(err);
-  }
-}
+};
