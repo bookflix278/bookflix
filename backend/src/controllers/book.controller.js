@@ -92,9 +92,9 @@ function dedupeBooks(books = []) {
 
 export const listBooks = async (req, res) => {
   try {
-    const search = (req.query.search || "").trim();
+    const search = (req.query.search || "").trim().toLowerCase();
 
-    let mongoBooks = await Book.find().sort({ createdAt: -1 }).limit(300);
+    const mongoBooks = await Book.find().sort({ createdAt: -1 }).limit(300);
 
     const { data: supaBooks, error } = await supabase
       .from("books")
@@ -109,20 +109,18 @@ export const listBooks = async (req, res) => {
     let supa = (supaBooks || []).map(normalizeSupabaseBook);
 
     if (search) {
-      const s = search.toLowerCase();
-
       mongo = mongo.filter(
         (b) =>
-          (b.title || "").toLowerCase().includes(s) ||
-          (b.author || "").toLowerCase().includes(s) ||
-          (b.category || "").toLowerCase().includes(s)
+          (b.title || "").toLowerCase().includes(search) ||
+          (b.author || "").toLowerCase().includes(search) ||
+          (b.category || "").toLowerCase().includes(search)
       );
 
       supa = supa.filter(
         (b) =>
-          (b.title || "").toLowerCase().includes(s) ||
-          (b.author || "").toLowerCase().includes(s) ||
-          (b.category || "").toLowerCase().includes(s)
+          (b.title || "").toLowerCase().includes(search) ||
+          (b.author || "").toLowerCase().includes(search) ||
+          (b.category || "").toLowerCase().includes(search)
       );
     }
 
