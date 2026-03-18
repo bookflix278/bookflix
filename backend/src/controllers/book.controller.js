@@ -1,8 +1,10 @@
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
+import mongoose from "mongoose";
 import Book from "../models/Book.js";
 import { generateCover } from "../utils/pdfCover.js";
+import { listSupabaseBooks, getSupabaseBookById, getSupabaseTopBooks, getSupabaseRecommended } from "../utils/supabaseBooks.js";
 
 const UPLOADS_DIR = process.env.UPLOADS_DIR
   ? path.resolve(process.env.UPLOADS_DIR)
@@ -124,11 +126,9 @@ export async function listBooks(req, res, next) {
     const skip = (pg - 1) * lim;
 
     const filter = { status: "active" };
-
     if (category) filter.category = category;
-
     if (search) {
-      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\]/g, "\$&"), "i");
       filter.$or = [{ title: rx }, { author: rx }, { category: rx }];
     }
 
@@ -138,13 +138,18 @@ export async function listBooks(req, res, next) {
       az: { title: 1 },
     };
 
-    const books = await Book.find(filter)
-      .populate("uploadedBy", "name")
-      .sort(sortMap[sort] || sortMap.recent)
-      .skip(skip)
-      .limit(lim);
+    const [mongoBooks, mongoTotal, supabaseResult] = await Promise.all([
+      Book.find(filter)
+        .populate("uploadedBy", "name")
+        .sort(sortMap[sort] || sortMap.recent)
+        .skip(skip)
+        .limit(lim),
+      Book.countDocuments(filter),
+      listSupabaseBooks({ search, category, sort, limit: lim, page: pg }).catch(() => ({ books: [], total: 0, totalPages: 0, page: pg }))
+    ]);
 
-    const total = await Book.countDocuments(filter);
+    const books = [...(mongoBooks || []), ...(supabaseResult.books || [])];
+    const total = mongoTotal + (supabaseResult.total || 0);
 
     return res.json({
       books,
@@ -159,7 +164,15 @@ export async function listBooks(req, res, next) {
 
 export async function getBook(req, res, next) {
   try {
-    const book = await Book.findById(req.params.id).populate("uploadedBy", "name");
+    const id = req.params.id;
+    let book = null;
+
+    if (id.startsWith("sb_")) {
+      book = await getSupabaseBookById(id);
+    } else if (mongoose.Types.ObjectId.isValid(id)) {
+      book = await Book.findById(id).populate("uploadedBy", "name");
+    }
+
     if (!book || book.status !== "active") {
       return res.status(404).json({ error: "Livro não encontrado." });
     }
@@ -171,7 +184,17 @@ export async function getBook(req, res, next) {
 
 export async function downloadBook(req, res, next) {
   try {
-    const book = await Book.findById(req.params.id);
+    const id = req.params.id;
+
+    if (id.startsWith("sb_")) {
+      const book = await getSupabaseBookById(id);
+      if (!book || !book.file?.externalUrl) {
+        return res.status(404).json({ error: "Livro não encontrado." });
+      }
+      return res.redirect(book.file.externalUrl);
+    }
+
+    const book = await Book.findById(id);
     if (!book || book.status !== "active") {
       return res.status(404).json({ error: "Livro não encontrado." });
     }
@@ -192,12 +215,15 @@ export async function downloadBook(req, res, next) {
 
 export async function topDownloads(req, res, next) {
   try {
-    const books = await Book.find({ status: "active" })
-      .populate("uploadedBy", "name")
-      .sort({ downloads: -1, createdAt: -1 })
-      .limit(20);
+    const [mongoBooks, supabaseBooks] = await Promise.all([
+      Book.find({ status: "active" })
+        .populate("uploadedBy", "name")
+        .sort({ downloads: -1, createdAt: -1 })
+        .limit(20),
+      getSupabaseTopBooks(20).catch(() => [])
+    ]);
 
-    return res.json({ books });
+    return res.json({ books: [...mongoBooks, ...supabaseBooks].slice(0, 20) });
   } catch (err) {
     return next(err);
   }
@@ -205,12 +231,15 @@ export async function topDownloads(req, res, next) {
 
 export async function recommended(req, res, next) {
   try {
-    const books = await Book.find({ status: "active" })
-      .populate("uploadedBy", "name")
-      .sort({ createdAt: -1, downloads: -1 })
-      .limit(20);
+    const [mongoBooks, supabaseBooks] = await Promise.all([
+      Book.find({ status: "active" })
+        .populate("uploadedBy", "name")
+        .sort({ createdAt: -1, downloads: -1 })
+        .limit(20),
+      getSupabaseRecommended(20).catch(() => [])
+    ]);
 
-    return res.json({ books });
+    return res.json({ books: [...mongoBooks, ...supabaseBooks].slice(0, 20) });
   } catch (err) {
     return next(err);
   }
