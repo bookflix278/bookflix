@@ -36,33 +36,18 @@ function getUser() {
 }
 
 function coverUrl(book) {
-  if (book?.cover_url) return book.cover_url;
-  if (book?.cover?.filename) return `${API}/covers/${book.cover.filename}`;
-  if (book?.cover?.url) return book.cover.url;
-  return "";
+  return book?.coverUrl || book?.cover_url || book?.cover?.url || (book?.cover?.filename ? `${API}/covers/${book.cover.filename}` : "");
 }
 
-function goUpload() {
-  window.location.href = "upload.html";
-}
-
-function goBulk() {
-  window.location.href = "bulk.html";
-}
-
-function goAdmin() {
-  window.location.href = "admin.html";
-}
-
+function goUpload() { window.location.href = "upload.html"; }
+function goBulk() { window.location.href = "bulk.html"; }
+function goAdmin() { window.location.href = "admin.html"; }
 function logout() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   window.location.href = "login.html";
 }
-
-function goLogin() {
-  window.location.href = "login.html";
-}
+function goLogin() { window.location.href = "login.html"; }
 
 function normalizeSortText(v) {
   return String(v || "")
@@ -73,15 +58,12 @@ function normalizeSortText(v) {
 }
 
 function sortAlpha(a, b) {
-  return normalizeSortText(a).localeCompare(normalizeSortText(b), "pt-BR", {
-    sensitivity: "base",
-  });
+  return normalizeSortText(a).localeCompare(normalizeSortText(b), "pt-BR", { sensitivity: "base" });
 }
 
 function firstLetterBucket(title = "") {
   const t = normalizeSortText(title);
   const ch = (t[0] || "#").toUpperCase();
-
   if ("ABCDE".includes(ch)) return "A–E";
   if ("FGHIJ".includes(ch)) return "F–J";
   if ("KLMNO".includes(ch)) return "K–O";
@@ -97,58 +79,37 @@ function isFavorite(bookId) {
 async function safeFetchJSON(url, options = {}) {
   const res = await fetch(url, options);
   let data = null;
-
-  try {
-    data = await res.json();
-  } catch {
-    data = null;
-  }
-
-  if (!res.ok) {
-    throw new Error(data?.error || `Erro ${res.status}`);
-  }
-
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
   return data;
 }
 
 async function fetchMe() {
   const t = token();
   if (!t) return null;
-
   try {
-    const data = await safeFetchJSON(`${API}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${t}` },
-    });
+    const data = await safeFetchJSON(`${API}/api/auth/me`, { headers: { Authorization: `Bearer ${t}` } });
     return data.user || null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 async function fetchFavorites() {
   const t = token();
   if (!t) return [];
-
   try {
-    const data = await safeFetchJSON(`${API}/api/user/favorites`, {
-      headers: { Authorization: `Bearer ${t}` },
-    });
+    const data = await safeFetchJSON(`${API}/api/user/favorites`, { headers: { Authorization: `Bearer ${t}` } });
     return data.favorites || [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 async function toggleFavorite(bookId) {
   const t = token();
   if (!t) return goLogin();
-
   try {
     const data = await safeFetchJSON(`${API}/api/user/favorite/${bookId}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${t}` },
     });
-
     serverFavorites = data.favorites || [];
     renderAll(currentBooks, currentTopBooks, currentRecommendedBooks);
   } catch (err) {
@@ -159,36 +120,26 @@ async function toggleFavorite(bookId) {
 async function fetchBooks(search = "") {
   const url = new URL(`${API}/api/books`);
   if (search) url.searchParams.set("search", search);
-  url.searchParams.set("limit", "500");
-  url.searchParams.set("sort", "recent");
-
   const data = await safeFetchJSON(url);
-  return data.books || [];
+  return Array.isArray(data) ? data : data.books || [];
 }
 
 async function fetchTopBooks() {
   try {
     const data = await safeFetchJSON(`${API}/api/books/top`);
-    return data.books || [];
-  } catch {
-    return [];
-  }
+    return Array.isArray(data) ? data : data.books || [];
+  } catch { return []; }
 }
 
 async function fetchRecommended() {
   try {
     const data = await safeFetchJSON(`${API}/api/books/recommended`);
-    return data.books || [];
-  } catch {
-    return [];
-  }
+    return Array.isArray(data) ? data : data.books || [];
+  } catch { return []; }
 }
 
 function getHeroCandidates(books) {
-  return [...books]
-    .filter((b) => b?.title)
-    .sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
-    .slice(0, 8);
+  return [...books].filter((b) => b?.title).sort((a, b) => (b.downloads || 0) - (a.downloads || 0)).slice(0, 8);
 }
 
 function ensureTopButtons() {
@@ -214,10 +165,7 @@ function renderHeroBook(book) {
   const img = coverUrl(book);
   const fav = isFavorite(book._id || book.id);
   const hello = currentUser?.name ? `Olá, ${currentUser.name}` : "Biblioteca digital";
-  const adminBtn =
-    currentUser?.role === "admin"
-      ? `<button class="btn" onclick="location.href='admin.html'">Painel admin</button>`
-      : "";
+  const adminBtn = currentUser?.role === "admin" ? `<button class="btn" onclick="location.href='admin.html'">Painel admin</button>` : "";
 
   heroBg.style.backgroundImage = img ? `url('${img}')` : "";
   heroTitle.textContent = book.title || "Sem título";
@@ -235,14 +183,9 @@ function renderHeroBook(book) {
 function startHeroRotation(books) {
   heroBooks = getHeroCandidates(books);
   heroIndex = 0;
-
-  if (heroTimer) {
-    clearInterval(heroTimer);
-    heroTimer = null;
-  }
-
+  if (heroTimer) clearInterval(heroTimer);
+  heroTimer = null;
   renderHeroBook(heroBooks[0] || books[0]);
-
   if (heroBooks.length > 1) {
     heroTimer = setInterval(() => {
       heroIndex = (heroIndex + 1) % heroBooks.length;
@@ -258,14 +201,8 @@ function makeBookCard(book) {
   return `
     <div class="card" onclick="openModalById('${book._id || book.id}')">
       <div class="cover">
-        ${
-          img
-            ? `<img src="${img}" alt="${escapeHtml(book.title || "capa")}" loading="lazy"/>`
-            : `<div class="no-cover">Sem capa</div>`
-        }
-        <button class="fav-chip ${fav ? "active" : ""}" onclick="event.stopPropagation(); toggleFavorite('${book._id || book.id}')">
-          ${fav ? "❤" : "♡"}
-        </button>
+        ${img ? `<img src="${img}" alt="${escapeHtml(book.title || "capa")}" loading="lazy"/>` : `<div class="no-cover">Sem capa</div>`}
+        <button class="fav-chip ${fav ? "active" : ""}" onclick="event.stopPropagation(); toggleFavorite('${book._id || book.id}')">${fav ? "❤" : "♡"}</button>
       </div>
       <div class="card-info">
         <p class="card-title">${escapeHtml(book.title || "Sem título")}</p>
@@ -277,86 +214,41 @@ function makeBookCard(book) {
 
 function buildSections(books, topBooks, recommendedBooks) {
   const sorted = [...books].sort((a, b) => sortAlpha(a.title, b.title));
-
-  const recent = [...books]
-    .sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0))
-    .slice(0, 24);
-
+  const recent = [...books].sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0)).slice(0, 24);
   const withoutCover = sorted.filter((b) => !coverUrl(b)).slice(0, 24);
-
-  const buckets = {
-    "A–E": [],
-    "F–J": [],
-    "K–O": [],
-    "P–T": [],
-    "U–Z": [],
-    "Outros títulos": [],
-  };
-
-  for (const book of sorted) {
-    buckets[firstLetterBucket(book.title)].push(book);
-  }
-
+  const buckets = { "A–E": [], "F–J": [], "K–O": [], "P–T": [], "U–Z": [], "Outros títulos": [] };
+  for (const book of sorted) buckets[firstLetterBucket(book.title)].push(book);
   const sections = [];
-
-  if (serverFavorites.length) {
-    sections.push({ title: "Seus favoritos", items: serverFavorites.slice(0, 24) });
-  }
-
-  if (recent.length) {
-    sections.push({ title: "Adicionados recentemente", items: recent });
-  }
-
-  if (topBooks.length) {
-    sections.push({ title: "Mais baixados", items: topBooks });
-  }
-
-  if (recommendedBooks.length) {
-    sections.push({ title: "Recomendados para você", items: recommendedBooks });
-  }
-
+  if (serverFavorites.length) sections.push({ title: "Seus favoritos", items: serverFavorites.slice(0, 24) });
+  if (recent.length) sections.push({ title: "Adicionados recentemente", items: recent });
+  if (topBooks.length) sections.push({ title: "Mais baixados", items: topBooks });
+  if (recommendedBooks.length) sections.push({ title: "Recomendados para você", items: recommendedBooks });
   for (const title of ["A–E", "F–J", "K–O", "P–T", "U–Z", "Outros títulos"]) {
-    if (buckets[title].length) {
-      sections.push({ title, items: buckets[title] });
-    }
+    if (buckets[title].length) sections.push({ title, items: buckets[title] });
   }
-
-  if (withoutCover.length) {
-    sections.push({ title: "Sem capa", items: withoutCover });
-  }
-
+  if (withoutCover.length) sections.push({ title: "Sem capa", items: withoutCover });
   return sections;
 }
 
 function renderRows(books, topBooks, recommendedBooks) {
   rowsEl.innerHTML = "";
-
   const sections = buildSections(books, topBooks, recommendedBooks);
-
   if (!sections.length) {
     rowsEl.innerHTML = `<div class="row-title">Nada encontrado</div>`;
     return;
   }
-
-  rowsEl.innerHTML = sections
-    .map(
-      (section) => `
-        <section class="row">
-          <div class="row-title">${section.title}</div>
-          <div class="rail">
-            ${section.items.map(makeBookCard).join("")}
-          </div>
-        </section>
-      `
-    )
-    .join("");
+  rowsEl.innerHTML = sections.map((section) => `
+    <section class="row">
+      <div class="row-title">${section.title}</div>
+      <div class="rail">${section.items.map(makeBookCard).join("")}</div>
+    </section>
+  `).join("");
 }
 
 function renderAll(books, topBooks = [], recommendedBooks = []) {
   currentBooks = books;
   currentTopBooks = topBooks;
   currentRecommendedBooks = recommendedBooks;
-
   ensureTopButtons();
   startHeroRotation(books);
   renderRows(books, topBooks, recommendedBooks);
@@ -376,20 +268,13 @@ function openModal(book) {
   const modalTop = document.getElementById("modalTop");
   const img = coverUrl(book);
   const fav = isFavorite(book._id || book.id);
-
   const canDownload = !!token();
-  const dlBtn = canDownload
-    ? `<button class="btn btn-primary" onclick="tryDownload('${book._id || book.id}')">Download</button>`
-    : `<button class="btn" onclick="goLogin()">Entrar para baixar</button>`;
+  const dlBtn = canDownload ? `<button class="btn btn-primary" onclick="tryDownload('${book._id || book.id}')">Download</button>` : `<button class="btn" onclick="goLogin()">Entrar para baixar</button>`;
 
   modalTop.innerHTML = `
     <div class="modal-body">
       <div class="modal-cover">
-        ${
-          img
-            ? `<img src="${img}" alt="${escapeHtml(book.title || "capa")}"/>`
-            : `<div class="cover" style="aspect-ratio:2/3"><div class="no-cover">Sem capa</div></div>`
-        }
+        ${img ? `<img src="${img}" alt="${escapeHtml(book.title || "capa")}"/>` : `<div class="cover" style="aspect-ratio:2/3"><div class="no-cover">Sem capa</div></div>`}
       </div>
       <div class="modal-content">
         <h2 class="modal-title">${escapeHtml(book.title || "Sem título")}</h2>
@@ -421,7 +306,8 @@ function closeModal() {
 async function openModalById(id) {
   try {
     const data = await safeFetchJSON(`${API}/api/books/${id}`);
-    if (data?.book) openModal(data.book);
+    const book = data.book || data;
+    if (book) openModal(book);
   } catch (err) {
     alert(err.message || "Não foi possível abrir o livro.");
   }
@@ -430,41 +316,19 @@ async function openModalById(id) {
 async function tryDownload(id) {
   const t = token();
   if (!t) return goLogin();
-
-  const res = await fetch(`${API}/api/books/${id}/download`, {
-    headers: { Authorization: `Bearer ${t}` },
-  });
-
-  if (!res.ok) {
-    alert("Você precisa entrar novamente para baixar.");
-    return;
-  }
-
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "livro";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  window.open(`${API}/api/books/${id}/download`, "_blank");
 }
 
 async function init() {
   try {
     currentUser = await fetchMe();
-    if (!currentUser) {
-      currentUser = getUser();
-    }
-
+    if (!currentUser) currentUser = getUser();
     const [books, topBooks, recommendedBooks, favorites] = await Promise.all([
       fetchBooks(""),
       fetchTopBooks(),
       fetchRecommended(),
       fetchFavorites(),
     ]);
-
     serverFavorites = favorites;
     renderAll(books, topBooks, recommendedBooks);
   } catch (e) {
@@ -476,7 +340,6 @@ async function init() {
 searchInput?.addEventListener("input", (e) => {
   const q = e.target.value.trim();
   clearTimeout(searchTimer);
-
   searchTimer = setTimeout(async () => {
     try {
       const [books, topBooks, recommendedBooks] = await Promise.all([
