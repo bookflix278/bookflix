@@ -1,8 +1,8 @@
-const API = window.BOOKFLIX_CONFIG?.BACKEND_URL || "https://bookflix-1-52pt.onrender.com";
+const CONFIG = window.BOOKFLIX_CONFIG || {};
+const API = CONFIG.BACKEND_URL || "https://bookflix-1-52pt.onrender.com";
 
 const rowsEl = document.getElementById("rows");
 const searchInput = document.getElementById("searchInput");
-
 const heroBg = document.getElementById("heroBg");
 const heroTitle = document.getElementById("heroTitle");
 const heroMeta = document.getElementById("heroMeta");
@@ -14,42 +14,26 @@ let searchTimer = null;
 let heroTimer = null;
 let heroBooks = [];
 let heroIndex = 0;
-
-let currentBooks = [];
-let currentTopBooks = [];
-let currentRecommendedBooks = [];
-
-let serverFavorites = [];
-let currentUser = null;
-
-function token() {
-  return localStorage.getItem("token") || "";
-}
+let allBooks = [];
 
 function getUser() {
   try {
-    const raw = localStorage.getItem("user");
-    return raw ? JSON.parse(raw) : null;
+    return JSON.parse(localStorage.getItem("user") || "null");
   } catch {
     return null;
   }
 }
 
-function coverUrl(book) {
-  return book?.coverUrl || book?.cover_url || book?.cover?.url || (book?.cover?.filename ? `${API}/covers/${book.cover.filename}` : "");
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-function goUpload() { window.location.href = "upload.html"; }
-function goBulk() { window.location.href = "bulk.html"; }
-function goAdmin() { window.location.href = "admin.html"; }
-function logout() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
-  window.location.href = "login.html";
-}
-function goLogin() { window.location.href = "login.html"; }
-
-function normalizeSortText(v) {
+function normalizeText(v) {
   return String(v || "")
     .trim()
     .toLocaleLowerCase("pt-BR")
@@ -57,93 +41,58 @@ function normalizeSortText(v) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-function sortAlpha(a, b) {
-  return normalizeSortText(a).localeCompare(normalizeSortText(b), "pt-BR", { sensitivity: "base" });
-}
-
-function firstLetterBucket(title = "") {
-  const t = normalizeSortText(title);
-  const ch = (t[0] || "#").toUpperCase();
-  if ("ABCDE".includes(ch)) return "A–E";
-  if ("FGHIJ".includes(ch)) return "F–J";
-  if ("KLMNO".includes(ch)) return "K–O";
-  if ("PQRST".includes(ch)) return "P–T";
-  if ("UVWXYZ".includes(ch)) return "U–Z";
-  return "Outros títulos";
-}
-
-function isFavorite(bookId) {
-  return serverFavorites.some((b) => (b._id || b.id) === bookId);
-}
-
-async function safeFetchJSON(url, options = {}) {
-  const res = await fetch(url, options);
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-  if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
-  return data;
-}
-
-async function fetchMe() {
-  const t = token();
-  if (!t) return null;
-  try {
-    const data = await safeFetchJSON(`${API}/api/auth/me`, { headers: { Authorization: `Bearer ${t}` } });
-    return data.user || null;
-  } catch { return null; }
-}
-
-async function fetchFavorites() {
-  const t = token();
-  if (!t) return [];
-  try {
-    const data = await safeFetchJSON(`${API}/api/user/favorites`, { headers: { Authorization: `Bearer ${t}` } });
-    return data.favorites || [];
-  } catch { return []; }
-}
-
-async function toggleFavorite(bookId) {
-  const t = token();
-  if (!t) return goLogin();
-  try {
-    const data = await safeFetchJSON(`${API}/api/user/favorite/${bookId}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${t}` },
-    });
-    serverFavorites = data.favorites || [];
-    renderAll(currentBooks, currentTopBooks, currentRecommendedBooks);
-  } catch (err) {
-    alert(err.message || "Não foi possível atualizar favoritos.");
+function prettifyTitle(raw = "", fileUrl = "") {
+  let title = String(raw || "").trim();
+  if ((!title || /^[a-f0-9]{24,}$/i.test(title)) && fileUrl) {
+    try {
+      title = decodeURIComponent(fileUrl.split("?")[0].split("/").pop() || "");
+    } catch {}
   }
+  title = title
+    .replace(/\.(pdf|epub|mobi|azw3)$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!title) return "Livro";
+  if (/^[a-f0-9]{24,}$/i.test(title)) return `Livro ${title.slice(0, 6)}`;
+  return title;
 }
 
-async function fetchBooks(search = "") {
-  const url = new URL(`${API}/api/books`);
-  if (search) url.searchParams.set("search", search);
-  const data = await safeFetchJSON(url);
-  return Array.isArray(data) ? data : data.books || [];
+function fallbackCover(title = "Livro") {
+  return `https://dummyimage.com/300x450/1e1e2f/e50914.png&text=${encodeURIComponent(title.slice(0, 20))}`;
 }
 
-async function fetchTopBooks() {
-  try {
-    const data = await safeFetchJSON(`${API}/api/books/top`);
-    return Array.isArray(data) ? data : data.books || [];
-  } catch { return []; }
+function normalizeBook(book) {
+  const fileUrl = book.fileUrl || book.file_url || book.downloadUrl || "";
+  const title = prettifyTitle(book.title, fileUrl);
+  const cover = book.coverUrl || book.cover_url || (book.cover?.filename ? `${API}/covers/${book.cover.filename}` : "") || fallbackCover(title);
+
+  return {
+    id: String(book.id || book._id || ""),
+    title,
+    author: book.author || "Desconhecido",
+    category: book.category || "Geral",
+    description: book.description || "Livro disponível na biblioteca.",
+    cover_url: cover,
+    file_url: fileUrl,
+    file_type: book.file_type || book.fileType || (fileUrl.toLowerCase().includes(".epub") ? "epub" : "pdf"),
+    downloads: book.downloads || 0,
+    created_at: book.created_at || book.createdAt || null,
+  };
 }
 
-async function fetchRecommended() {
-  try {
-    const data = await safeFetchJSON(`${API}/api/books/recommended`);
-    return Array.isArray(data) ? data : data.books || [];
-  } catch { return []; }
-}
-
-function getHeroCandidates(books) {
-  return [...books].filter((b) => b?.title).sort((a, b) => (b.downloads || 0) - (a.downloads || 0)).slice(0, 8);
+function goUpload() { location.href = "upload.html"; }
+function goBulk() { location.href = "bulk.html"; }
+function goLogin() { location.href = "login.html"; }
+function goAdmin() { location.href = "admin.html"; }
+function logout() {
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  location.href = "login.html";
 }
 
 function ensureTopButtons() {
-  const user = currentUser || getUser();
+  const user = getUser();
   const buttons = topActions?.querySelectorAll("button") || [];
   buttons.forEach((btn) => {
     if (btn.textContent === "Sair") btn.style.display = user ? "inline-flex" : "none";
@@ -152,31 +101,65 @@ function ensureTopButtons() {
   });
 }
 
+async function getJSON(url, options = {}) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
+  return data;
+}
+
+async function fetchBooks(search = "") {
+  const url = new URL(`${API}/api/books`);
+  if (search) url.searchParams.set("search", search);
+  const data = await getJSON(url.toString());
+  const books = Array.isArray(data) ? data : data.books || [];
+  return books.map(normalizeBook);
+}
+
+async function fetchTopBooks() {
+  try {
+    const data = await getJSON(`${API}/api/books/top`);
+    const books = Array.isArray(data) ? data : data.books || [];
+    return books.map(normalizeBook);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchRecommended() {
+  try {
+    const data = await getJSON(`${API}/api/books/recommended`);
+    const books = Array.isArray(data) ? data : data.books || [];
+    return books.map(normalizeBook);
+  } catch {
+    return [];
+  }
+}
+
+function getHeroCandidates(books) {
+  return [...books].slice(0, 10);
+}
+
 function renderHeroBook(book) {
+  const user = getUser();
+
   if (!book) {
+    heroBg.style.backgroundImage = "";
     heroTitle.textContent = "Bookflix";
     heroMeta.textContent = "Biblioteca digital pública";
     heroDesc.textContent = "Nenhum livro cadastrado ainda. Faça um upload para começar.";
     heroActions.innerHTML = `<button class="btn btn-primary" onclick="goUpload()">Enviar primeiro livro</button>`;
-    heroBg.style.backgroundImage = "";
     return;
   }
 
-  const img = coverUrl(book);
-  const fav = isFavorite(book._id || book.id);
-  const hello = currentUser?.name ? `Olá, ${currentUser.name}` : "Biblioteca digital";
-  const adminBtn = currentUser?.role === "admin" ? `<button class="btn" onclick="location.href='admin.html'">Painel admin</button>` : "";
-
-  heroBg.style.backgroundImage = img ? `url('${img}')` : "";
-  heroTitle.textContent = book.title || "Sem título";
-  heroMeta.textContent = `${hello} • ${book.author || "Autor"} • ${book.category || "Geral"} • ${book.downloads ?? 0} downloads`;
-  heroDesc.textContent = (book.description || "Importado para sua biblioteca digital.").slice(0, 240);
-
+  heroBg.style.backgroundImage = book.cover_url ? `url('${book.cover_url}')` : "";
+  heroTitle.textContent = book.title;
+  heroMeta.textContent = `${user?.name ? `Olá, ${user.name}` : "Biblioteca digital"} • ${book.author} • ${book.category}`;
+  heroDesc.textContent = (book.description || "Sem descrição.").slice(0, 220);
   heroActions.innerHTML = `
-    <button class="btn btn-primary" onclick="openModalById('${book._id || book.id}')">Ver detalhes</button>
-    <button class="btn" onclick="tryDownload('${book._id || book.id}')">Download</button>
-    <button class="btn" onclick="toggleFavorite('${book._id || book.id}')">${fav ? "❤ Favorito" : "♡ Favoritar"}</button>
-    ${adminBtn}
+    <button class="btn btn-primary" onclick="openModalById('${book.id}')">Ver detalhes</button>
+    <button class="btn" onclick="openBook('${book.file_url}')">Ler livro</button>
+    <button class="btn" onclick="downloadBook('${book.file_url}','${escapeHtml(book.title)}')">Baixar</button>
   `;
 }
 
@@ -184,7 +167,6 @@ function startHeroRotation(books) {
   heroBooks = getHeroCandidates(books);
   heroIndex = 0;
   if (heroTimer) clearInterval(heroTimer);
-  heroTimer = null;
   renderHeroBook(heroBooks[0] || books[0]);
   if (heroBooks.length > 1) {
     heroTimer = setInterval(() => {
@@ -195,49 +177,51 @@ function startHeroRotation(books) {
 }
 
 function makeBookCard(book) {
-  const img = coverUrl(book);
-  const fav = isFavorite(book._id || book.id);
-
   return `
-    <div class="card" onclick="openModalById('${book._id || book.id}')">
+    <div class="card" onclick="openModalById('${book.id}')">
       <div class="cover">
-        ${img ? `<img src="${img}" alt="${escapeHtml(book.title || "capa")}" loading="lazy"/>` : `<div class="no-cover">Sem capa</div>`}
-        <button class="fav-chip ${fav ? "active" : ""}" onclick="event.stopPropagation(); toggleFavorite('${book._id || book.id}')">${fav ? "❤" : "♡"}</button>
+        <img src="${book.cover_url}" alt="${escapeHtml(book.title)}" loading="lazy"/>
       </div>
       <div class="card-info">
-        <p class="card-title">${escapeHtml(book.title || "Sem título")}</p>
-        <p class="card-author">${escapeHtml(book.author || "Desconhecido")}</p>
+        <p class="card-title">${escapeHtml(book.title)}</p>
+        <p class="card-author">${escapeHtml(book.author)}</p>
       </div>
     </div>
   `;
 }
 
 function buildSections(books, topBooks, recommendedBooks) {
-  const sorted = [...books].sort((a, b) => sortAlpha(a.title, b.title));
-  const recent = [...books].sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0)).slice(0, 24);
-  const withoutCover = sorted.filter((b) => !coverUrl(b)).slice(0, 24);
-  const buckets = { "A–E": [], "F–J": [], "K–O": [], "P–T": [], "U–Z": [], "Outros títulos": [] };
-  for (const book of sorted) buckets[firstLetterBucket(book.title)].push(book);
   const sections = [];
-  if (serverFavorites.length) sections.push({ title: "Seus favoritos", items: serverFavorites.slice(0, 24) });
-  if (recent.length) sections.push({ title: "Adicionados recentemente", items: recent });
-  if (topBooks.length) sections.push({ title: "Mais baixados", items: topBooks });
-  if (recommendedBooks.length) sections.push({ title: "Recomendados para você", items: recommendedBooks });
-  for (const title of ["A–E", "F–J", "K–O", "P–T", "U–Z", "Outros títulos"]) {
-    if (buckets[title].length) sections.push({ title, items: buckets[title] });
+  const recent = [...books].sort((a,b)=> new Date(b.created_at || 0)-new Date(a.created_at ||0)).slice(0,24);
+  const buckets = {"A–E":[],"F–J":[],"K–O":[],"P–T":[],"U–Z":[],"Outros títulos":[]};
+
+  for (const book of [...books].sort((a,b)=>normalizeText(a.title).localeCompare(normalizeText(b.title),"pt-BR"))) {
+    const ch = (normalizeText(book.title)[0] || "#").toUpperCase();
+    if ("ABCDE".includes(ch)) buckets["A–E"].push(book);
+    else if ("FGHIJ".includes(ch)) buckets["F–J"].push(book);
+    else if ("KLMNO".includes(ch)) buckets["K–O"].push(book);
+    else if ("PQRST".includes(ch)) buckets["P–T"].push(book);
+    else if ("UVWXYZ".includes(ch)) buckets["U–Z"].push(book);
+    else buckets["Outros títulos"].push(book);
   }
-  if (withoutCover.length) sections.push({ title: "Sem capa", items: withoutCover });
+
+  if (recent.length) sections.push({ title: "Adicionados recentemente", items: recent });
+  if (topBooks.length) sections.push({ title: "Mais baixados", items: topBooks.slice(0,24) });
+  if (recommendedBooks.length) sections.push({ title: "Recomendados", items: recommendedBooks.slice(0,24) });
+  for (const title of ["A–E","F–J","K–O","P–T","U–Z","Outros títulos"]) {
+    if (buckets[title].length) sections.push({ title, items: buckets[title].slice(0,60) });
+  }
   return sections;
 }
 
-function renderRows(books, topBooks, recommendedBooks) {
+function renderRows(books, topBooks = [], recommendedBooks = []) {
   rowsEl.innerHTML = "";
   const sections = buildSections(books, topBooks, recommendedBooks);
   if (!sections.length) {
-    rowsEl.innerHTML = `<div class="row-title">Nada encontrado</div>`;
+    rowsEl.innerHTML = `<section class="row"><div class="empty-state">Nada encontrado.</div></section>`;
     return;
   }
-  rowsEl.innerHTML = sections.map((section) => `
+  rowsEl.innerHTML = sections.map(section => `
     <section class="row">
       <div class="row-title">${section.title}</div>
       <div class="rail">${section.items.map(makeBookCard).join("")}</div>
@@ -245,113 +229,92 @@ function renderRows(books, topBooks, recommendedBooks) {
   `).join("");
 }
 
-function renderAll(books, topBooks = [], recommendedBooks = []) {
-  currentBooks = books;
-  currentTopBooks = topBooks;
-  currentRecommendedBooks = recommendedBooks;
-  ensureTopButtons();
-  startHeroRotation(books);
-  renderRows(books, topBooks, recommendedBooks);
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function openModal(book) {
   const modal = document.getElementById("modal");
   const modalTop = document.getElementById("modalTop");
-  const img = coverUrl(book);
-  const fav = isFavorite(book._id || book.id);
-  const canDownload = !!token();
-  const dlBtn = canDownload ? `<button class="btn btn-primary" onclick="tryDownload('${book._id || book.id}')">Download</button>` : `<button class="btn" onclick="goLogin()">Entrar para baixar</button>`;
-
   modalTop.innerHTML = `
     <div class="modal-body">
       <div class="modal-cover">
-        ${img ? `<img src="${img}" alt="${escapeHtml(book.title || "capa")}"/>` : `<div class="cover" style="aspect-ratio:2/3"><div class="no-cover">Sem capa</div></div>`}
+        <img src="${book.cover_url}" alt="${escapeHtml(book.title)}"/>
       </div>
       <div class="modal-content">
-        <h2 class="modal-title">${escapeHtml(book.title || "Sem título")}</h2>
+        <h2 class="modal-title">${escapeHtml(book.title)}</h2>
         <div class="modal-meta">
-          <span class="pill">${escapeHtml(book.author || "Autor")}</span>
-          <span class="pill">${escapeHtml(book.category || "Geral")}</span>
-          <span class="pill">${book.downloads ?? 0} downloads</span>
+          <span class="pill">${escapeHtml(book.author)}</span>
+          <span class="pill">${escapeHtml(book.category)}</span>
+          <span class="pill">${escapeHtml(String(book.file_type).toUpperCase())}</span>
         </div>
-        <p class="modal-desc">${escapeHtml(book.description || "Sem descrição.")}</p>
+        <p class="modal-desc">${escapeHtml(book.description)}</p>
         <div class="modal-actions">
-          ${dlBtn}
-          <button class="btn" onclick="toggleFavorite('${book._id || book.id}')">${fav ? "❤ Favorito" : "♡ Favoritar"}</button>
+          <button class="btn btn-primary" onclick="openBook('${book.file_url}')">Ler livro</button>
+          <button class="btn" onclick="downloadBook('${book.file_url}','${escapeHtml(book.title)}')">Baixar</button>
           <button class="btn" onclick="closeModal()">Fechar</button>
         </div>
       </div>
-    </div>
-  `;
-
+    </div>`;
   modal.classList.add("show");
   modal.classList.remove("hidden");
 }
 
+function openModalById(id) {
+  const book = allBooks.find((b) => b.id === id);
+  if (book) openModal(book);
+}
+
 function closeModal() {
-  const modal = document.getElementById("modal");
-  modal.classList.remove("show");
-  modal.classList.add("hidden");
+  document.getElementById("modal")?.classList.add("hidden");
+  document.getElementById("modal")?.classList.remove("show");
 }
 
-async function openModalById(id) {
-  try {
-    const data = await safeFetchJSON(`${API}/api/books/${id}`);
-    const book = data.book || data;
-    if (book) openModal(book);
-  } catch (err) {
-    alert(err.message || "Não foi possível abrir o livro.");
-  }
+function openBook(url) {
+  if (url) window.open(url, "_blank", "noopener,noreferrer");
 }
 
-async function tryDownload(id) {
-  const t = token();
-  if (!t) return goLogin();
-  window.open(`${API}/api/books/${id}/download`, "_blank");
+function downloadBook(url, title = "livro") {
+  if (!url) return;
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.download = title;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function filterBooks(query) {
+  const q = normalizeText(query);
+  if (!q) return allBooks;
+  return allBooks.filter((book) => normalizeText(`${book.title} ${book.author} ${book.category} ${book.description}`).includes(q));
 }
 
 async function init() {
   try {
-    currentUser = await fetchMe();
-    if (!currentUser) currentUser = getUser();
-    const [books, topBooks, recommendedBooks, favorites] = await Promise.all([
+    ensureTopButtons();
+    const [books, topBooks, recommendedBooks] = await Promise.all([
       fetchBooks(""),
       fetchTopBooks(),
       fetchRecommended(),
-      fetchFavorites(),
     ]);
-    serverFavorites = favorites;
-    renderAll(books, topBooks, recommendedBooks);
+    allBooks = books;
+    startHeroRotation(books);
+    renderRows(books, topBooks, recommendedBooks);
   } catch (e) {
-    heroDesc.textContent = "Erro ao carregar. Verifique se o backend está rodando e se o CORS foi liberado.";
+    heroTitle.textContent = "Bookflix";
+    heroMeta.textContent = "Erro ao carregar";
+    heroDesc.textContent = e.message || "Não foi possível carregar os livros.";
+    rowsEl.innerHTML = `<section class="row"><div class="empty-state">${escapeHtml(e.message || "Erro")}</div></section>`;
     console.error(e);
   }
 }
 
 searchInput?.addEventListener("input", (e) => {
-  const q = e.target.value.trim();
   clearTimeout(searchTimer);
   searchTimer = setTimeout(async () => {
-    try {
-      const [books, topBooks, recommendedBooks] = await Promise.all([
-        fetchBooks(q),
-        fetchTopBooks(),
-        fetchRecommended(),
-      ]);
-      renderAll(books, topBooks, recommendedBooks);
-    } catch (e) {
-      console.error(e);
-    }
-  }, 250);
+    const filtered = filterBooks(e.target.value.trim());
+    renderRows(filtered, [], []);
+    renderHeroBook(filtered[0] || allBooks[0]);
+  }, 200);
 });
 
 document.getElementById("modal")?.addEventListener("click", (e) => {
@@ -359,13 +322,12 @@ document.getElementById("modal")?.addEventListener("click", (e) => {
 });
 
 init();
-
 window.closeModal = closeModal;
 window.logout = logout;
 window.goUpload = goUpload;
 window.goBulk = goBulk;
-window.goAdmin = goAdmin;
 window.goLogin = goLogin;
-window.tryDownload = tryDownload;
+window.goAdmin = goAdmin;
 window.openModalById = openModalById;
-window.toggleFavorite = toggleFavorite;
+window.openBook = openBook;
+window.downloadBook = downloadBook;

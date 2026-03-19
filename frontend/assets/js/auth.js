@@ -1,4 +1,4 @@
-const AUTH_API = window.BOOKFLIX_CONFIG?.BACKEND_URL || "http://127.0.0.1:4000";
+const AUTH_API = window.BOOKFLIX_CONFIG?.BACKEND_URL || "https://bookflix-1-52pt.onrender.com";
 
 function setMsg(message, ok = false) {
   const el = document.getElementById("msg");

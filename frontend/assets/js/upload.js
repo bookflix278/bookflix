@@ -1,4 +1,4 @@
-const UPLOAD_API = window.BOOKFLIX_CONFIG?.BACKEND_URL || "http://127.0.0.1:4000";
+const UPLOAD_API = window.BOOKFLIX_CONFIG?.BACKEND_URL || "https://bookflix-1-52pt.onrender.com";
 const uploadMsg = document.getElementById("msg");
 
 function setUploadMsg(message, ok = false) {
