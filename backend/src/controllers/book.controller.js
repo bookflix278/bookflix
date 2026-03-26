@@ -199,19 +199,40 @@ export async function downloadBook(req, res, next) {
     const id = req.params.id;
 
     const mongoBook = await Book.findById(id).catch(() => null);
-    if (mongoBook) {
-      if (mongoBook.file?.externalUrl) return res.redirect(mongoBook.file.externalUrl);
-      if (mongoBook.file?.filename) {
-        mongoBook.downloads = (mongoBook.downloads || 0) + 1;
-        await mongoBook.save().catch(() => {});
-        return res.redirect(`${req.protocol}://${req.get("host")}/files/${mongoBook.file.filename}`);
-      }
+    if (mongoBook?.file?.filename) {
+      const filePath = path.join(uploadsRoot, "files", mongoBook.file.filename);
+      const safeTitle = String(mongoBook.title || "Livro").replace(/[<>:"/\|?*]+/g, "").trim();
+      const safeAuthor = String(mongoBook.author || "").replace(/[<>:"/\|?*]+/g, "").trim();
+      const ext = path.extname(mongoBook.file.filename) || ".pdf";
+      const fileName = `${safeTitle}${safeAuthor ? ` - ${safeAuthor}` : ""}${ext}`;
+      return res.download(filePath, fileName);
     }
+    if (mongoBook?.file?.externalUrl) return res.redirect(mongoBook.file.externalUrl);
 
     if (supabase) {
       const cleanId = String(id).replace(/^sb_/, "");
       const { data } = await supabase.from("books").select("*").eq("id", cleanId).maybeSingle();
-      if (data?.file_url) return res.redirect(data.file_url);
+
+      if (data?.file_url) {
+        const fullUrl = new URL(data.file_url);
+        const prefix = "/storage/v1/object/public/books/";
+        const idx = fullUrl.pathname.index(prefix);
+        if (idx === -1) return res.redirect(data.file_url);
+
+        const storagePath = decodeURIComponent(fullUrl.pathname.slice(idx + prefix.length));
+        const { data: fileBlob, error } = await supabase.storage.from("books").download(storagePath);
+        if (error || !fileBlob) return res.redirect(data.file_url);
+
+        const buffer = Buffer.from(await fileBlob.arrayBuffer());
+        const ext = path.extname(storagePath) || ".pdf";
+        const safeTitle = String(data.title || "Livro").replace(/[<>:"/\|?*]+/g, "").trim();
+        const safeAuthor = String(data.author || "").replace(/[<>:"/\|?*]+/g, "").trim();
+        const fileName = `${safeTitle}${safeAuthor ? ` - ${safeAuthor}` : ""}${ext}`;
+
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+        res.setHeader("Content-Type", fileBlob.type || "application/octet-stream");
+        return res.send(buffer);
+      }
     }
 
     return res.status(404).json({ error: "Arquivo não encontrado." });
