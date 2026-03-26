@@ -5,13 +5,12 @@ import { createClient } from "@supabase/supabase-js";
 import Book from "../models/Book.js";
 import { generateCover } from "../utils/pdfCover.js";
 
-const supabase = process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)
-  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)
-  : null;
+const supabase =
+  process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)
+    : null;
 
-const uploadsRoot = process.env.UPLOADS_DIR
-  ? path.resolve(process.env.UPLOADS_DIR)
-  : path.resolve("uploads");
+const uploadsRoot = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : path.resolve("uploads");
 const coversDir = path.join(uploadsRoot, "covers");
 
 function isLikelyHash(value = "") {
@@ -63,12 +62,12 @@ function fallbackCover(title = "Livro") {
 function normalizeMongoBook(book, req) {
   const obj = book.toObject ? book.toObject() : book;
   const title = formatTitle(obj.title, obj.file?.filename);
-  const author = obj.author || "Desconhecido";
+  const author = obj.author || "";
   const category = obj.category || "Geral";
   const description = obj.description || "Livro disponível na biblioteca";
   const coverUrl = obj.cover?.filename
     ? `${req.protocol}://${req.get("host")}/covers/${obj.cover.filename}`
-    : (obj.cover?.externalUrl || fallbackCover(title));
+    : obj.cover?.externalUrl || fallbackCover(title);
   const fileUrl = obj.file?.externalUrl
     ? obj.file.externalUrl
     : obj.file?.filename
@@ -103,7 +102,7 @@ function normalizeSupabaseBook(row) {
     id: row.id,
     _id: row.id,
     title,
-    author: row.author || "Desconhecido",
+    author: row.author || "",
     category: row.category || "Geral",
     description: row.description || "Livro disponível na biblioteca",
     cover_url: coverUrl,
@@ -135,7 +134,7 @@ async function getSupabaseBooks() {
     .from("books")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(1000);
+    .limit(120);
 
   if (error) {
     console.error("Supabase books error:", error.message);
@@ -149,14 +148,11 @@ export async function listBooks(req, res, next) {
   try {
     const search = String(req.query.search || "").trim().toLowerCase();
     const [mongoDocs, supaBooks] = await Promise.all([
-      Book.find({ status: { $ne: "removed" } }).sort({ createdAt: -1 }).limit(500),
+      Book.find({ status: { $ne: "removed" } }).sort({ createdAt: -1 }).limit(120),
       getSupabaseBooks(),
     ]);
 
-    let books = [
-      ...supaBooks,
-      ...mongoDocs.map((doc) => normalizeMongoBook(doc, req)),
-    ];
+    let books = [...supaBooks, ...mongoDocs.map((doc) => normalizeMongoBook(doc, req))];
 
     books = dedupeBooks(books).sort(
       (a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0)
@@ -199,38 +195,36 @@ export async function downloadBook(req, res, next) {
     const id = req.params.id;
 
     const mongoBook = await Book.findById(id).catch(() => null);
-    if (mongoBook?.file?.filename) {
-      const filePath = path.join(uploadsRoot, "files", mongoBook.file.filename);
-      const safeTitle = String(mongoBook.title || "Livro").replace(/[<>:"/\|?*]+/g, "").trim();
-      const safeAuthor = String(mongoBook.author || "").replace(/[<>:"/\|?*]+/g, "").trim();
-      const ext = path.extname(mongoBook.file.filename) || ".pdf";
-      const fileName = `${safeTitle}${safeAuthor ? ` - ${safeAuthor}` : ""}${ext}`;
-      return res.download(filePath, fileName);
+    if (mongoBook) {
+      if (mongoBook.file?.filename) {
+        const filePath = path.resolve("uploads/files", mongoBook.file.filename);
+        const fileName = `${mongoBook.title} - ${mongoBook.author || "Autor"}.pdf`.replace(/[<>:"/\\|?*]+/g, "");
+        return res.download(filePath, fileName);
+      }
+
+      if (mongoBook.file?.externalUrl) {
+        return res.redirect(mongoBook.file.externalUrl);
+      }
     }
-    if (mongoBook?.file?.externalUrl) return res.redirect(mongoBook.file.externalUrl);
 
     if (supabase) {
       const cleanId = String(id).replace(/^sb_/, "");
       const { data } = await supabase.from("books").select("*").eq("id", cleanId).maybeSingle();
 
       if (data?.file_url) {
-        const fullUrl = new URL(data.file_url);
-        const prefix = "/storage/v1/object/public/books/";
-        const idx = fullUrl.pathname.index(prefix);
-        if (idx === -1) return res.redirect(data.file_url);
+        const fileUrl = data.file_url;
+        const match = decodeURIComponent(fileUrl.split("/object/public/books/")[1]);
 
-        const storagePath = decodeURIComponent(fullUrl.pathname.slice(idx + prefix.length));
-        const { data: fileBlob, error } = await supabase.storage.from("books").download(storagePath);
-        if (error || !fileBlob) return res.redirect(data.file_url);
+        const { data: fileData, error } = await supabase.storage.from("books").download(match);
+        if (error || !fileData) {
+          return res.status(404).json({ error: "Arquivo não encontrado." });
+        }
 
-        const buffer = Buffer.from(await fileBlob.arrayBuffer());
-        const ext = path.extname(storagePath) || ".pdf";
-        const safeTitle = String(data.title || "Livro").replace(/[<>:"/\|?*]+/g, "").trim();
-        const safeAuthor = String(data.author || "").replace(/[<>:"/\|?*]+/g, "").trim();
-        const fileName = `${safeTitle}${safeAuthor ? ` - ${safeAuthor}` : ""}${ext}`;
+        const buffer = Buffer.from(await fileData.arrayBuffer());
+        const fileName = `${data.title} - ${data.author || "Autor"}.pdf`.replace(/[<>:"/\\|?*]+/g, "");
 
         res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-        res.setHeader("Content-Type", fileBlob.type || "application/octet-stream");
+        res.setHeader("Content-Type", "application/pdf");
         return res.send(buffer);
       }
     }
@@ -256,9 +250,10 @@ export async function createBook(req, res, next) {
     }
 
     const title = formatTitle(req.body.title || bookFile.originalname, bookFile.originalname);
-    const author = (req.body.author || "Desconhecido").trim() || "Desconhecido";
+    const author = (req.body.author || "").trim();
     const category = (req.body.category || "Geral").trim() || "Geral";
-    const description = (req.body.description || "Livro disponível na biblioteca").trim() || "Livro disponível na biblioteca";
+    const description =
+      (req.body.description || "Livro disponível na biblioteca").trim() || "Livro disponível na biblioteca";
 
     let cover = null;
     if (coverFile) {
@@ -318,10 +313,7 @@ export async function topDownloads(req, res, next) {
       getSupabaseBooks(),
     ]);
 
-    const books = dedupeBooks([
-      ...supaBooks,
-      ...mongoDocs.map((doc) => normalizeMongoBook(doc, req)),
-    ])
+    const books = dedupeBooks([...supaBooks, ...mongoDocs.map((doc) => normalizeMongoBook(doc, req))])
       .sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
       .slice(0, 20);
 
@@ -334,14 +326,11 @@ export async function topDownloads(req, res, next) {
 export async function recommended(req, res, next) {
   try {
     const [mongoDocs, supaBooks] = await Promise.all([
-      Book.find({ status: { $ne: "removed" } }).sort({ createdAt: -1 }).limit(40),
+      Book.find({ status: { $ne: "removed" } }).sort({ createdAt: -1 }).limit(20),
       getSupabaseBooks(),
     ]);
 
-    const books = dedupeBooks([
-      ...supaBooks,
-      ...mongoDocs.map((doc) => normalizeMongoBook(doc, req)),
-    ])
+    const books = dedupeBooks([...supaBooks, ...mongoDocs.map((doc) => normalizeMongoBook(doc, req))])
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
       .slice(0, 20);
 
